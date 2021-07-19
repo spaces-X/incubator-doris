@@ -190,6 +190,7 @@ public:
     OLAPStatus init(const Schema* schema, const TBrokerScanRange& t_scan_range,
                     const TDescriptorTable& t_desc_tbl);
     OLAPStatus next(ContiguousRow* row);
+    OLAPStatus fill_field_row(RowCursorCell* dst, const char* src,bool src_null, MemPool* mem_pool, FieldType type);
     void print_profile();
 
     OLAPStatus close() {
