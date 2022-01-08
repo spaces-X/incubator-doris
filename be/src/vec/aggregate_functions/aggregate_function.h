@@ -196,7 +196,7 @@ public:
         }
     }
 
-    void add_batch_range(size_t batch_begin, size_t batch_end, AggregateDataPtr place,
+    virtual void add_batch_range(size_t batch_begin, size_t batch_end, AggregateDataPtr place,
                          const IColumn** columns, Arena* arena, bool has_null) override {
         for (size_t i = batch_begin; i <= batch_end; ++i)
             static_cast<const Derived*>(this)->add(place, columns, i, arena);

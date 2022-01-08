@@ -38,6 +38,14 @@ struct AggregateFunctionSumData {
 
     void add(T value) { sum += value; }
 
+    void add_range(const T* value, size_t length) {
+        for (size_t i = 0; i < length; i++)
+        {
+            sum += *(value + i);
+        }
+        
+    }
+
     void merge(const AggregateFunctionSumData& rhs) { sum += rhs.sum; }
 
     void write(BufferWritable& buf) const { write_binary(sum, buf); }
@@ -102,6 +110,13 @@ public:
     void insert_result_into(ConstAggregateDataPtr __restrict place, IColumn& to) const override {
         auto& column = static_cast<ColVecResult&>(to);
         column.get_data().push_back(this->data(place).get());
+    }
+
+    void add_batch_range(size_t batch_begin, size_t batch_end, AggregateDataPtr place,
+                            const IColumn** columns, Arena* arena, bool has_null) const override {
+        // do some SIMD optimize
+        const auto& column = static_cast<const ColVecType&>(*columns[0]);
+        this->data(place).add_range(column.get_data() + batch_begin, batch_end - batch_begin + 1);
     }
 
     const char* get_header_file_path() const override { return __FILE__; }
