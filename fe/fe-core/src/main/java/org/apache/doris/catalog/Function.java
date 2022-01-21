@@ -491,6 +491,7 @@ public class Function implements Writable {
             case CHAR:
             case HLL:
             case BITMAP:
+            case QUANTILE_STATE:
             case STRING:
                 return "string_val";
             case DATE:
@@ -529,6 +530,7 @@ public class Function implements Writable {
             case CHAR:
             case HLL:
             case BITMAP:
+            case QUANTILE_STATE:
             case STRING:
                 return "StringVal";
             case DATE:
