@@ -760,6 +760,12 @@ public class FunctionSet<min_initIN9doris_udf12DecimalV2ValEEEvPNS2_15FunctionCo
     public static final String ORTHOGONAL_BITMAP_INTERSECT_COUNT = "orthogonal_bitmap_intersect_count";
     public static final String ORTHOGONAL_BITMAP_UNION_COUNT = "orthogonal_bitmap_union_count";
 
+    public static final String QUANTILE_UNION = "quantile_union";
+    //TODO(weixiang): is quantile_percent can be replaced by approx_percentile?
+    public static final String QUANTILE_PERCENT = "quantile_percent";
+    public static final String TO_QUANTILE_STATE = "to_quantile_state";
+    //TODO(weixiang): add symbol
+
     private static final Map<Type, String> ORTHOGONAL_BITMAP_INTERSECT_INIT_SYMBOL =
             ImmutableMap.<Type, String>builder()
                     .put(Type.TINYINT,
