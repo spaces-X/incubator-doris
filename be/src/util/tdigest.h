@@ -443,12 +443,16 @@ public:
     }
 
     uint32_t serialized_size() {
-        return sizeof(Value) * 5 + sizeof(Index) * 2 + sizeof(size_t) * 3 +
+        return sizeof(uint32_t) + sizeof(Value) * 5 + sizeof(Index) * 2 + sizeof(size_t) * 3 +
                _processed.size() * sizeof(Centroid) + _unprocessed.size() * sizeof(Centroid) +
                _cumulative.size() * sizeof(Weight);
     }
 
     void serialize(uint8_t* writer) {
+        //TODO(weixiang): first write the total length of Tdigest
+        uint32_t total_size = serialized_size();
+        memcpy(writer, &total_size, sizeof(uint32_t));
+        writer += sizeof(uint32_t);
         memcpy(writer, &_compression, sizeof(Value));
         writer += sizeof(Value);
         memcpy(writer, &_min, sizeof(Value));
@@ -490,6 +494,10 @@ public:
     }
 
     void unserialize(const uint8_t* type_reader) {
+        //TODO(weixiang): first get total length for compatibility
+        uint32_t total_length = 0;
+        memcpy(&total_length, type_reader, sizeof(uint32_t));
+        type_reader += sizeof(uint32_t);
         memcpy(&_compression, type_reader, sizeof(Value));
         type_reader += sizeof(Value);
         memcpy(&_min, type_reader, sizeof(Value));

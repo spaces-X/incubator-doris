@@ -69,6 +69,7 @@ add_library(Exprs
   new_agg_fn_evaluator.cc
   bitmap_function.cpp
   hll_function.cpp
+  quantile_function.cpp
   grouping_sets_functions.cpp
   topn_function.cpp
   table_function/explode_split.cpp
