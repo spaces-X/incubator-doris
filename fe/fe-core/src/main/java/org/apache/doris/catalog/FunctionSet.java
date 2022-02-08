@@ -1981,8 +1981,27 @@ public class FunctionSet<min_initIN9doris_udf12DecimalV2ValEEEvPNS2_15FunctionCo
                 "",
                 "",
                 true, false, true, true));
-      
-              //Percentile
+        //quantile_state
+        addBuiltin(AggregateFunction.createBuiltin(QUANTILE_UNION, Lists.newArrayList(Type.QUANTILE_STATE),
+                Type.QUANTILE_STATE,
+                Type.QUANTILE_STATE,
+                "_ZN5doris22QuantileStateFunctions19quantile_state_initEPN9doris_udf15FunctionContextEPNS1_9StringValE",
+                "_ZN5doris22QuantileStateFunctions14quantile_unionEPN9doris_udf15FunctionContextERKNS1_9StringValEPS4_",
+                "_ZN5doris22QuantileStateFunctions14quantile_unionEPN9doris_udf15FunctionContextERKNS1_9StringValEPS4_",
+                "_ZN5doris22QuantileStateFunctions24quantile_state_serializeEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                "_ZN5doris22QuantileStateFunctions24quantile_state_serializeEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                true, false, true));
+
+        addBuiltin(AggregateFunction.createBuiltin(QUANTILE_UNION, Lists.newArrayList(Type.QUANTILE_STATE),
+                Type.QUANTILE_STATE,
+                Type.QUANTILE_STATE,
+                "",
+                "",
+                "",
+                "",
+                "",
+                true, false, true, true));
+        //Percentile
         addBuiltin(AggregateFunction.createBuiltin("percentile",
                 Lists.newArrayList(Type.BIGINT, Type.DOUBLE), Type.DOUBLE, Type.VARCHAR,
                 prefix + "15percentile_initEPN9doris_udf15FunctionContextEPNS1_9StringValE",
