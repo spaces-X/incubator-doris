@@ -27,6 +27,8 @@ public:
     static StringVal to_quantile_state(FunctionContext* ctx, const StringVal& src);
     static void quantile_union(FunctionContext* ctx, const StringVal& src, StringVal* dst);
     static DoubleVal quantile_percent(FunctionContext* ctx, StringVal& src);
+    static StringVal quantile_state_serialize(FunctionContext* ctx, const StringVal& src);
+
 };
 
 }

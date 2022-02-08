@@ -27,6 +27,7 @@ namespace doris {
 
 using doris_udf::DoubleVal;
 using doris_udf::StringVal;
+using doris_udf::FloatVal;
 
 void QuantileStateFunctions::init(){}
 
@@ -45,9 +46,12 @@ static StringVal serialize(FunctionContext* ctx, QuantileState<double>* value) {
 
 StringVal QuantileStateFunctions::to_quantile_state(FunctionContext* ctx, const StringVal& src) {
     QuantileState<double> quantile_state;
-    if (ctx->get_num_constant_args() > 0) {
-        float* arg = reinterpret_cast<float*>(ctx->get_constant_arg(0));
-        quantile_state.set_compression(*arg);
+    const AnyVal* digest_compression = ctx->get_constant_arg(1);
+    if (digest_compression != nullptr) {
+        float compression = reinterpret_cast<const FloatVal*>(digest_compression)->val;
+        if (compression >= 2048 && compression <= 10000) {
+            quantile_state.set_compression(compression);
+        }
     }
     
     if(!src.is_null) {
@@ -82,33 +86,42 @@ void QuantileStateFunctions::quantile_union(FunctionContext* ctx, const StringVa
 }
 
 DoubleVal QuantileStateFunctions::quantile_percent(FunctionContext* ctx, StringVal& src) {
-    if (ctx->get_num_constant_args() == 1) {
-        //constant args start from index 2
-        float arg = *reinterpret_cast<float*>(ctx->get_constant_arg(0));
-        if (arg > 1 || arg <0)
+    const AnyVal* percentile = ctx->get_constant_arg(1);
+    if (percentile != nullptr) {
+        float percentile_value = reinterpret_cast<const FloatVal*>(percentile)->val;
+        if (percentile_value > 1 || percentile_value <0)
         {
             std::stringstream error_msg;
-            error_msg<< "The percentile must between 0 and 1, but input is:" << std::to_string(arg);
+            error_msg<< "The percentile must between 0 and 1, but input is:" << std::to_string(percentile_value);
             ctx->set_error(error_msg.str().c_str());
         }
         
         if (src.len == 0) {
             auto quantile_state = reinterpret_cast<QuantileState<double>*>(src.ptr);
-            return {static_cast<double>(quantile_state->get_value_by_percentile(arg))};
+            return {static_cast<double>(quantile_state->get_value_by_percentile(percentile_value))};
         } else {
             QuantileState<double> quantile_state(Slice(src.ptr, src.len));
-            return {static_cast<double>(quantile_state.get_value_by_percentile(arg))};
+            return {static_cast<double>(quantile_state.get_value_by_percentile(percentile_value))};
         }
 
 
     } else {
         std::stringstream error_msg;
-        error_msg << "The input: " << std::string(reinterpret_cast<char*>(src.ptr), src.len)
-                    << " is not valid, quantile_percent function support only one constant arg"
-                    << "but " <<ctx->get_num_constant_args() << "are given.";
+        error_msg << "quantile_percent function's second argument must be constant. eg: quantile_percent(col, 0.95)";
         ctx->set_error(error_msg.str().c_str()); 
     }
     return  DoubleVal::null();
+}
+
+StringVal QuantileStateFunctions::quantile_state_serialize(FunctionContext* ctx, const StringVal& src) {
+    if(src.is_null) {
+        return src;
+
+    }
+    auto tmp_ptr = reinterpret_cast<QuantileState<double>*>(src.ptr);
+    StringVal result = serialize(ctx, tmp_ptr);
+    delete tmp_ptr;
+    return result;
 }
 
 }
