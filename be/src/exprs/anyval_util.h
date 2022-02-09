@@ -236,6 +236,7 @@ public:
             return sizeof(doris_udf::DoubleVal);
 
         case TYPE_OBJECT:
+        case TYPE_QUANTILE_STATE:
         case TYPE_HLL:
         case TYPE_CHAR:
         case TYPE_VARCHAR:
@@ -278,6 +279,7 @@ public:
         case TYPE_DOUBLE:
             return alignof(DoubleVal);
         case TYPE_OBJECT:
+        case TYPE_QUANTILE_STATE:
         case TYPE_HLL:
         case TYPE_VARCHAR:
         case TYPE_CHAR:
@@ -378,6 +380,7 @@ public:
         case TYPE_VARCHAR:
         case TYPE_HLL:
         case TYPE_OBJECT:
+        case TYPE_QUANTILE_STATE:
         case TYPE_STRING:
             reinterpret_cast<const StringValue*>(slot)->to_string_val(
                     reinterpret_cast<doris_udf::StringVal*>(dst));

@@ -193,6 +193,8 @@ std::string TabletColumn::get_string_by_field_type(FieldType type) {
 
     case OLAP_FIELD_TYPE_OBJECT:
         return "OBJECT";
+    case OLAP_FIELD_TYPE_QUANTILE_STATE:
+        return "QUANTILE_STATE";
 
     default:
         return "UNKNOWN";
@@ -254,6 +256,7 @@ uint32_t TabletColumn::get_field_length_by_type(TPrimitiveType::type type, uint3
         return 4;
     case TPrimitiveType::DOUBLE:
         return 8;
+    case TPrimitiveType::QUANTILE_STATE: //TODO(weixiang):check the meanings of this length
     case TPrimitiveType::OBJECT:
         return 16;
     case TPrimitiveType::CHAR:

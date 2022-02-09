@@ -141,6 +141,7 @@ Expr::Expr(const TypeDescriptor& type)
     case TYPE_HLL:
     case TYPE_OBJECT:
     case TYPE_STRING:
+    case TYPE_QUANTILE_STATE:
         _node_type = (TExprNodeType::STRING_LITERAL);
         break;
 
@@ -198,6 +199,7 @@ Expr::Expr(const TypeDescriptor& type, bool is_slotref)
         case TYPE_VARCHAR:
         case TYPE_HLL:
         case TYPE_OBJECT:
+        case TYPE_QUANTILE_STATE:
         case TYPE_STRING:
             _node_type = (TExprNodeType::STRING_LITERAL);
             break;
@@ -708,6 +710,7 @@ doris_udf::AnyVal* Expr::get_const_val(ExprContext* context) {
     case TYPE_VARCHAR:
     case TYPE_HLL:
     case TYPE_OBJECT:
+    case TYPE_QUANTILE_STATE:
     case TYPE_STRING: {
         _constant_val.reset(new StringVal(get_string_val(context, nullptr)));
         break;
