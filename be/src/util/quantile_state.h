@@ -58,7 +58,7 @@ public:
     ~QuantileState();
 
 private:
-    QuantileStateType _type;
+    QuantileStateType _type = EMPTY;
     //TODO(weixiang): TDigest support templates
     TDigest* tdigest_ptr = nullptr;
     T _single_data;
