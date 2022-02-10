@@ -42,7 +42,7 @@ QuantileState<T>::~QuantileState() {
 
 template<typename T>
 size_t QuantileState<T>::get_serialized_size() {
-    size_t size = sizeof(EMPTY);
+    size_t size = 1 + sizeof(float); // type(QuantileStateType) + compression(float)
     switch(_type) {
     case EMPTY:
         break;
@@ -72,11 +72,11 @@ bool QuantileState<T>::is_valid(const Slice& slice) {
     }
     const uint8_t* ptr = (uint8_t*)slice.data;
     const uint8_t* end = (uint8_t*)slice.data + slice.size;
-    float compression = (float) decode_fixed32_le(ptr);
-    ptr += sizeof(float);
-    if (compression < 2048 || compression > 10000) {
+    float compress_value = *reinterpret_cast<const float*>(ptr);
+    if (compress_value < 2048 || compress_value > 10000) {
         return false;
     }
+    ptr += sizeof(float);
     
 
     auto type = (QuantileStateType)*ptr++;
@@ -143,7 +143,7 @@ bool QuantileState<T>::deserialize(const Slice& slice) {
     }
 
     const uint8_t* ptr = (uint8_t*)slice.data;
-    compression = (float) decode_fixed32_le(ptr);
+    compression = *reinterpret_cast<const float*>(ptr);
     ptr += sizeof(float);
     // first byte : type
     _type = (QuantileStateType)*ptr++;
@@ -337,8 +337,10 @@ void QuantileState<T>::add_value(const T& value) {
 template<typename T>
 void QuantileState<T>::clear() {
     _type = EMPTY;
-    delete tdigest_ptr;
-    tdigest_ptr = nullptr;
+    if (tdigest_ptr != nullptr) {
+        delete tdigest_ptr;
+        tdigest_ptr = nullptr;
+    }
     _explicit_data.clear();
     _explicit_data.shrink_to_fit();
 
