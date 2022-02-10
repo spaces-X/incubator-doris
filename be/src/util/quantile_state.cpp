@@ -72,6 +72,13 @@ bool QuantileState<T>::is_valid(const Slice& slice) {
     }
     const uint8_t* ptr = (uint8_t*)slice.data;
     const uint8_t* end = (uint8_t*)slice.data + slice.size;
+    float compression = (float) decode_fixed32_le(ptr);
+    ptr += sizeof(float);
+    if (compression < 2048 || compression > 10000) {
+        return false;
+    }
+    
+
     auto type = (QuantileStateType)*ptr++;
     switch (type) {
     case EMPTY:
