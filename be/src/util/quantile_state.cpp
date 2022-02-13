@@ -17,6 +17,7 @@
 #include <string.h>
 #include "util/quantile_state.h"
 #include "util/coding.h"
+#include "common/logging.h"
 
 
 namespace doris{
@@ -139,6 +140,7 @@ bool QuantileState<T>::deserialize(const Slice& slice) {
     }
     // check input is valid
     if (!is_valid(slice)) {
+        LOG(WARNING) << "QuantileState deserialize failed: slice is invalid";
         return false;
     }
 
@@ -203,8 +205,11 @@ size_t QuantileState<T>::serialize(uint8_t* dst) const{
     }
     case EXPLICIT: {
         *ptr++ = EXPLICIT;
-        int size = _explicit_data.size();
+        uint16_t size = _explicit_data.size();
+        memcpy(ptr, &size, sizeof(uint16_t));
+        ptr += sizeof(uint16_t);
         for (int i = 0; i < size; i++) {
+            //TODO(weixiang): may be only once memcpy is okay.
             memcpy(ptr, &_explicit_data[i], sizeof(T));
             ptr += sizeof(T);
         }

@@ -94,6 +94,7 @@ DoubleVal QuantileStateFunctions::quantile_percent(FunctionContext* ctx, StringV
             std::stringstream error_msg;
             error_msg<< "The percentile must between 0 and 1, but input is:" << std::to_string(percentile_value);
             ctx->set_error(error_msg.str().c_str());
+            return DoubleVal::null();
         }
         
         if (src.len == 0) {
