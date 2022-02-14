@@ -30,7 +30,7 @@ namespace doris {
 class Slice;
 class TDigest;
 
-const static int QUANTILE_STATE_EXPLICIT_NUM = 64;
+const static int QUANTILE_STATE_EXPLICIT_NUM = 3;
 
 enum QuantileStateType {
     EMPTY = 0,
