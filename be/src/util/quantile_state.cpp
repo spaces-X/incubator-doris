@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 #include <string.h>
+#include <cmath>
 #include "util/quantile_state.h"
 #include "util/coding.h"
 #include "common/logging.h"
@@ -118,16 +119,28 @@ bool QuantileState<T>::is_valid(const Slice& slice) {
 template<typename T>
 T QuantileState<T>::get_value_by_percentile(float percentile) {
     switch(_type) {
-    case EMPTY:
-    case SINGLE:
-    case EXPLICIT:
-        // just for test
-        return 0.0;
-    case TDIGEST:
-        return tdigest_ptr->quantile(percentile);
-    default:
-        return 0.0;
+    case EMPTY: {
+        return NAN;
     }
+    case SINGLE: {
+        return _single_data;
+    }
+    case EXPLICIT: {
+        //TODO(weixiang): maybe change vector to priority queue and calculate the quantile will be better.
+        size_t explicit_data_size = _explicit_data.size();
+        TDigest result(std::min((float) explicit_data_size, compression));
+        for (size_t i = 0; i < explicit_data_size; i++) {
+            result.add(_explicit_data[i]);
+        }
+        return result.quantile(percentile);
+    }
+    case TDIGEST: {
+        return tdigest_ptr->quantile(percentile);
+    }
+    default:
+        break;
+    }
+    return NAN;
 }
 
 template<typename T>
@@ -347,6 +360,7 @@ void QuantileState<T>::clear() {
 
 }
 
+//TODO(weixiang): maybe float is enough!
 template class QuantileState<double>;
 
 }
