@@ -212,7 +212,8 @@ size_t QuantileState<T>::serialize(uint8_t* dst) const{
     }
     case TDIGEST: {
         *ptr++ = TDIGEST;
-        tdigest_ptr->serialize(ptr);
+        size_t tdigest_size = tdigest_ptr->serialize(ptr);
+        ptr += tdigest_size;
         break;
     }
     default:
