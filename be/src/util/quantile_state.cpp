@@ -106,7 +106,7 @@ bool QuantileState<T>::is_valid(const Slice& slice) {
             return false;
         }
         uint32_t tdigest_serialized_length = decode_fixed32_le(ptr);
-        ptr += sizeof(uint32_t) + tdigest_serialized_length;
+        ptr += tdigest_serialized_length;
         break;
     }
     default:
@@ -155,7 +155,7 @@ bool QuantileState<T>::deserialize(const Slice& slice) {
         break;
     case SINGLE: {
         // 2: single_data value
-        memcpy(&_single_data, ptr, sizeof(T));
+        _single_data = *reinterpret_cast<const T*>(ptr);
         ptr += sizeof(T);
         break;
     }
@@ -166,10 +166,8 @@ bool QuantileState<T>::deserialize(const Slice& slice) {
         ptr += sizeof(uint16_t);
         //TODO(weixiang): now just use fixed memory here may be wasted,optimize it later
         _explicit_data.resize(std::min(num_explicits*2, QUANTILE_STATE_EXPLICIT_NUM));
-        for (int i = 0; i < num_explicits; ++i) {
-             memcpy(&_explicit_data[i], ptr, sizeof(T));
-             ptr += sizeof(T);
-        }
+        memcpy(&_explicit_data[0], ptr, num_explicits*sizeof(T));
+        ptr += num_explicits*sizeof(T);
         break;
     }
     case TDIGEST: {
@@ -190,7 +188,7 @@ bool QuantileState<T>::deserialize(const Slice& slice) {
 template<typename T>
 size_t QuantileState<T>::serialize(uint8_t* dst) const{
     uint8_t* ptr = dst;
-    memcpy(ptr, &compression, sizeof(float));
+    *reinterpret_cast<float *>(ptr) = compression;
     ptr += sizeof(float);
     switch (_type) {
     case EMPTY: {
@@ -199,20 +197,17 @@ size_t QuantileState<T>::serialize(uint8_t* dst) const{
     }
     case SINGLE: {
         *ptr++ = SINGLE;
-        memcpy(ptr, &_single_data, sizeof(T));
+        *reinterpret_cast<T *>(ptr) = _single_data;
         ptr += sizeof(T);
         break;
     }
     case EXPLICIT: {
         *ptr++ = EXPLICIT;
         uint16_t size = _explicit_data.size();
-        memcpy(ptr, &size, sizeof(uint16_t));
+        *reinterpret_cast<uint16_t *>(ptr) = size;
         ptr += sizeof(uint16_t);
-        for (int i = 0; i < size; i++) {
-            //TODO(weixiang): may be only once memcpy is okay.
-            memcpy(ptr, &_explicit_data[i], sizeof(T));
-            ptr += sizeof(T);
-        }
+        memcpy(ptr, &_explicit_data[0], size*sizeof(T));
+        ptr += size*sizeof(T);
         break;
     }
     case TDIGEST: {
