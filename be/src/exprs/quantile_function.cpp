@@ -33,9 +33,8 @@ void QuantileStateFunctions::init(){}
 
 void QuantileStateFunctions::quantile_state_init(FunctionContext* ctx, StringVal* dst) {
     dst->is_null = false;
-    auto* state = new QuantileState<double>();
-    dst->ptr = (uint8_t*) state;
-    dst->len = state->get_serialized_size();
+    dst->len = sizeof(QuantileState<double>);
+    dst->ptr = (uint8_t*) new QuantileState<double>();
 }
 
 static StringVal serialize(FunctionContext* ctx, QuantileState<double>* value) {
