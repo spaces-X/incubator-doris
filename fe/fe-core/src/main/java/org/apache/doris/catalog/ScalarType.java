@@ -760,7 +760,7 @@ public class ScalarType extends Type {
             case BITMAP:
                 return 1024; // this is a estimated value
             case QUANTILE_STATE:
-                return 8192; // estimated value
+                return 8192; // TODO(weixiang):fix here
             case STRING:
                 return 1024;
             default:

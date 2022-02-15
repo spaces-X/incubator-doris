@@ -764,7 +764,6 @@ public class FunctionSet<min_initIN9doris_udf12DecimalV2ValEEEvPNS2_15FunctionCo
     //TODO(weixiang): is quantile_percent can be replaced by approx_percentile?
     public static final String QUANTILE_PERCENT = "quantile_percent";
     public static final String TO_QUANTILE_STATE = "to_quantile_state";
-    //TODO(weixiang): add symbol
 
     private static final Map<Type, String> ORTHOGONAL_BITMAP_INTERSECT_INIT_SYMBOL =
             ImmutableMap.<Type, String>builder()
