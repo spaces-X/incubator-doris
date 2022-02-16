@@ -19,10 +19,10 @@
 #include "util/quantile_state.h"
 
 namespace doris{
-using QuantileState = QuantileState<double>;
+using DoubleQuantileState = QuantileState<double>;
 
 TEST(QuantileStateTest, merge) {
-    QuantileState empty();
+    DoubleQuantileState empty;
     ASSERT_EQ(EMPTY, empty._type);
     empty.add_value(1);
     ASSERT_EQ(SINGLE, empty._type);
@@ -35,7 +35,7 @@ TEST(QuantileStateTest, merge) {
     ASSERT_EQ(5, empty.get_value_by_percentile(1));
 
 
-    QuantileState another();
+    DoubleQuantileState another;
     another.add_value(6);
     another.add_value(7);
     another.add_value(8);

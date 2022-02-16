@@ -27,8 +27,9 @@
 
 
 namespace doris {
+using DoubleQuantileState = QuantileState<double>;
 
-StringVal convert_quantile_state_to_string(FunctionContext* ctx, QuantileState<double>& state) {
+StringVal convert_quantile_state_to_string(FunctionContext* ctx, DoubleQuantileState& state) {
     StringVal result(ctx, state.get_serialized_size());
     state.serialize(result.ptr);
     return result;
@@ -59,7 +60,7 @@ TEST_F(QuantileStateFunctionsTest, to_quantile_state) {
     StringVal input = AnyValUtil::from_string_temp(ctx, std::to_string(5000));
     StringVal result = QuantileStateFunctions::to_quantile_state(ctx, input);
     float compression = 2048;
-    QuantileState<double> state(compression);
+    DoubleQuantileState state(compression);
     state.add_value(5000);
     StringVal expected = convert_quantile_state_to_string(ctx, state);
     ASSERT_EQ(expected, result);
@@ -68,32 +69,32 @@ TEST_F(QuantileStateFunctionsTest, to_quantile_state) {
 TEST_F(QuantileStateFunctionsTest, quantile_union) {
     StringVal dst;
     QuantileStateFunctions::quantile_state_init(ctx, &dst);
-    QuantileState<double> state1;
+    DoubleQuantileState state1;
     state1.add_value(1);
     StringVal src1 = convert_quantile_state_to_string(ctx, state1);
     QuantileStateFunctions::quantile_union(ctx, src1, &dst);
 
-    QuantileState<double> state2;
+    DoubleQuantileState state2;
     state2.add_value(2);
     StringVal src2 = convert_quantile_state_to_string(ctx, state2);
     QuantileStateFunctions::quantile_union(ctx, src2, &dst);
 
-    QuantileState<double> state3;
+    DoubleQuantileState state3;
     state3.add_value(3);
     StringVal src3 = convert_quantile_state_to_string(ctx, state3);
     QuantileStateFunctions::quantile_union(ctx, src3, &dst);
 
-    QuantileState<double> state4;
+    DoubleQuantileState state4;
     state4.add_value(4);
     StringVal src4 = convert_quantile_state_to_string(ctx, state4);
     QuantileStateFunctions::quantile_union(ctx, src4, &dst);
 
-    QuantileState<double> state5;
+    DoubleQuantileState state5;
     state5.add_value(5);
     StringVal src5 = convert_quantile_state_to_string(ctx, state5);
     QuantileStateFunctions::quantile_union(ctx, src5, &dst);
 
-    QuantileState<double> expect;
+    DoubleQuantileState expect;
     expect.add_value(1);
     expect.add_value(2);
     expect.add_value(3);
@@ -114,7 +115,7 @@ TEST_F(QuantileStateFunctionsTest, quantile_percent) {
     constant_args.push_back(&percentile);
     ctx->impl()->set_constant_args(constant_args);
 
-    QuantileState<double> state;
+    DoubleQuantileState state;
     state.add_value(1);
     state.add_value(2);
     state.add_value(3);
