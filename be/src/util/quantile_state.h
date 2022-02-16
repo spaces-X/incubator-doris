@@ -30,7 +30,7 @@ namespace doris {
 class Slice;
 class TDigest;
 
-const static int QUANTILE_STATE_EXPLICIT_NUM = 3;
+const static int QUANTILE_STATE_EXPLICIT_NUM = 2048;
 
 enum QuantileStateType {
     EMPTY = 0,
@@ -55,6 +55,7 @@ public:
     bool is_valid(const Slice& slice);
     size_t get_serialized_size();
     T get_value_by_percentile(float percentile);
+    T get_explicit_value_by_percentile(float percentile);
     ~QuantileState();
 
 private:

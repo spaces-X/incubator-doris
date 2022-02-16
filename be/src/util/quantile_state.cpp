@@ -117,6 +117,24 @@ bool QuantileState<T>::is_valid(const Slice& slice) {
 }
 
 template<typename T>
+T QuantileState<T>::get_explicit_value_by_percentile(float percentile) {
+    DCHECK(_type == EXPLICIT);
+    if (percentile < 0 || percentile > 1) {
+        LOG(WARNING) << "get_explicit_value_by_percentile failed caused by percentile:" << percentile <<" is invalid";
+        return NAN;
+    }
+    int n = _explicit_data.size();
+    std::sort(_explicit_data.begin(), _explicit_data.end());
+
+    double index = (n - 1) * percentile;
+    int intIdx = (int) index;
+    if (intIdx == n-1 ){
+        return _explicit_data[intIdx];
+    }
+    return _explicit_data[intIdx+1] * (index - intIdx) + _explicit_data[intIdx] * (intIdx + 1 - index);
+}
+
+template<typename T>
 T QuantileState<T>::get_value_by_percentile(float percentile) {
     switch(_type) {
     case EMPTY: {
@@ -127,12 +145,13 @@ T QuantileState<T>::get_value_by_percentile(float percentile) {
     }
     case EXPLICIT: {
         //TODO(weixiang): maybe change vector to priority queue and calculate the quantile will be better.
-        size_t explicit_data_size = _explicit_data.size();
-        TDigest result(std::min((float) explicit_data_size, compression));
-        for (size_t i = 0; i < explicit_data_size; i++) {
-            result.add(_explicit_data[i]);
-        }
-        return result.quantile(percentile);
+        // size_t explicit_data_size = _explicit_data.size();
+        // TDigest result(std::min((float) explicit_data_size, compression));
+        // for (size_t i = 0; i < explicit_data_size; i++) {
+        //     result.add(_explicit_data[i]);
+        // }
+        // return result.quantile(percentile);
+        return get_explicit_value_by_percentile(percentile);
     }
     case TDIGEST: {
         return tdigest_ptr->quantile(percentile);
