@@ -197,7 +197,8 @@ bool QuantileState<T>::deserialize(const Slice& slice) {
         uint16_t num_explicits = decode_fixed16_le(ptr);
         ptr += sizeof(uint16_t);
         //TODO(weixiang): now just use fixed memory here may be wasted,optimize it later
-        _explicit_data.resize(std::min(num_explicits*2, QUANTILE_STATE_EXPLICIT_NUM));
+        _explicit_data.reserve(std::min(num_explicits*2, QUANTILE_STATE_EXPLICIT_NUM));
+        _explicit_data.resize(num_explicits);
         memcpy(&_explicit_data[0], ptr, num_explicits*sizeof(T));
         ptr += num_explicits*sizeof(T);
         break;
