@@ -52,7 +52,7 @@ size_t QuantileState<T>::get_serialized_size() {
         size += sizeof(T);
         break;
     case EXPLICIT:
-        size += sizeof(T) * _explicit_data.size();
+        size += sizeof(uint16_t) + sizeof(T) * _explicit_data.size();
         break;
     case TDIGEST:
         size += tdigest_ptr->serialized_size();
