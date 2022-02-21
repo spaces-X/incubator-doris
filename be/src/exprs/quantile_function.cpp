@@ -45,6 +45,7 @@ static StringVal serialize(FunctionContext* ctx, QuantileState<double>* value) {
 
 StringVal QuantileStateFunctions::to_quantile_state(FunctionContext* ctx, const StringVal& src) {
     QuantileState<double> quantile_state;
+    quantile_state.set_compression(2048);
     const AnyVal* digest_compression = ctx->get_constant_arg(1);
     if (digest_compression != nullptr) {
         float compression = reinterpret_cast<const FloatVal*>(digest_compression)->val;
