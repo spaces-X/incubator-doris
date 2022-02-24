@@ -256,7 +256,7 @@ uint32_t TabletColumn::get_field_length_by_type(TPrimitiveType::type type, uint3
         return 4;
     case TPrimitiveType::DOUBLE:
         return 8;
-    case TPrimitiveType::QUANTILE_STATE: //TODO(weixiang):check the meanings of this length
+    case TPrimitiveType::QUANTILE_STATE:
     case TPrimitiveType::OBJECT:
         return 16;
     case TPrimitiveType::CHAR:

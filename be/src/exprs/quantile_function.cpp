@@ -56,8 +56,7 @@ StringVal QuantileStateFunctions::to_quantile_state(FunctionContext* ctx, const 
     
     if(!src.is_null) {
         StringParser::ParseResult parse_result = StringParser::PARSE_SUCCESS;
-        //TODO(weixiang): support double here
-        float float_value = StringParser::string_to_float<float>(
+        double double_value = StringParser::string_to_float<double>(
                 reinterpret_cast<char*>(src.ptr), src.len, &parse_result);
         if (UNLIKELY(parse_result != StringParser::PARSE_SUCCESS)) {
             std::stringstream error_msg;
@@ -67,7 +66,7 @@ StringVal QuantileStateFunctions::to_quantile_state(FunctionContext* ctx, const 
             ctx->set_error(error_msg.str().c_str());
             return StringVal::null();
         }
-        quantile_state.add_value((double)float_value);
+        quantile_state.add_value(double_value);
     }
     return serialize(ctx, &quantile_state);
 }

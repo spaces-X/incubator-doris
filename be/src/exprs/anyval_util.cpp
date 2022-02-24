@@ -146,7 +146,7 @@ FunctionContext::TypeDesc AnyValUtil::column_type_to_type_desc(const TypeDescrip
         break;
     case TYPE_OBJECT:
         out.type = FunctionContext::TYPE_OBJECT;
-        break;    //TODO(weixiang): no break here why? figure out the meaning of out.len
+        break;
     case TYPE_QUANTILE_STATE:
         out.type = FunctionContext::TYPE_QUANTILE_STATE;
         break;

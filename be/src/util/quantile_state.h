@@ -60,11 +60,9 @@ public:
 
 private:
     QuantileStateType _type = EMPTY;
-    //TODO(weixiang): TDigest support templates
     TDigest* tdigest_ptr = nullptr;
     T _single_data;
     std::vector<T> _explicit_data;
-    //TODO(weixiang): a compression may be added
     float compression;
     
 };

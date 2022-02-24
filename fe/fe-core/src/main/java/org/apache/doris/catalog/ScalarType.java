@@ -760,7 +760,7 @@ public class ScalarType extends Type {
             case BITMAP:
                 return 1024; // this is a estimated value
             case QUANTILE_STATE:
-                return 8192; // TODO(weixiang):fix here
+                return 1024; // TODO(weixiang): no used in FE, figure out whether can delete this funcion?
             case STRING:
                 return 1024;
             default:

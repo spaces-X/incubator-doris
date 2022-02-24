@@ -450,7 +450,6 @@ public:
 
     size_t serialize(uint8_t* writer) {
         uint8_t* dst = writer;
-        //TODO(weixiang): first write the total length of Tdigest
         uint32_t total_size = serialized_size();
         memcpy(writer, &total_size, sizeof(uint32_t));
         writer += sizeof(uint32_t);
@@ -472,32 +471,28 @@ public:
         uint32_t size = _processed.size();
         memcpy(writer, &size, sizeof(uint32_t));
         writer += sizeof(uint32_t);
-        for (int i = 0; i < size; i++) {
-            memcpy(writer, &_processed[i], sizeof(Centroid));
-            writer += sizeof(Centroid);
-        }
+      
+        memcpy(writer, &_processed[0], size * sizeof(Centroid));
+        writer += size * sizeof(Centroid);
 
         size = _unprocessed.size();
         memcpy(writer, &size, sizeof(uint32_t));
         writer += sizeof(uint32_t);
-        //TODO(weixiang): may be once memcpy is enough!
-        for (int i = 0; i < size; i++) {
-            memcpy(writer, &_unprocessed[i], sizeof(Centroid));
-            writer += sizeof(Centroid);
-        }
+
+        memcpy(writer, &_unprocessed[0], size * sizeof(Centroid));
+        writer += size * sizeof(Centroid);
 
         size = _cumulative.size();
         memcpy(writer, &size, sizeof(uint32_t));
         writer += sizeof(uint32_t);
-        for (int i = 0; i < size; i++) {
-            memcpy(writer, &_cumulative[i], sizeof(Weight));
-            writer += sizeof(Weight);
-        }
+
+        memcpy(writer, &_cumulative[0], size * sizeof(Centroid));
+        writer += size * sizeof(Centroid);
+        
         return writer - dst;
     }
 
     void unserialize(const uint8_t* type_reader) {
-        //TODO(weixiang): first get total length for compatibility
         uint32_t total_length = 0;
         memcpy(&total_length, type_reader, sizeof(uint32_t));
         type_reader += sizeof(uint32_t);

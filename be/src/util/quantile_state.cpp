@@ -144,13 +144,6 @@ T QuantileState<T>::get_value_by_percentile(float percentile) {
         return _single_data;
     }
     case EXPLICIT: {
-        //TODO(weixiang): maybe change vector to priority queue and calculate the quantile will be better.
-        // size_t explicit_data_size = _explicit_data.size();
-        // TDigest result(std::min((float) explicit_data_size, compression));
-        // for (size_t i = 0; i < explicit_data_size; i++) {
-        //     result.add(_explicit_data[i]);
-        // }
-        // return result.quantile(percentile);
         return get_explicit_value_by_percentile(percentile);
     }
     case TDIGEST: {
@@ -196,7 +189,6 @@ bool QuantileState<T>::deserialize(const Slice& slice) {
         // make sure that num_explicit is positive
         uint16_t num_explicits = decode_fixed16_le(ptr);
         ptr += sizeof(uint16_t);
-        //TODO(weixiang): now just use fixed memory here may be wasted,optimize it later
         _explicit_data.reserve(std::min(num_explicits*2, QUANTILE_STATE_EXPLICIT_NUM));
         _explicit_data.resize(num_explicits);
         memcpy(&_explicit_data[0], ptr, num_explicits*sizeof(T));
@@ -380,7 +372,6 @@ void QuantileState<T>::clear() {
 
 }
 
-//TODO(weixiang): maybe float is enough!
 template class QuantileState<double>;
 
 }
