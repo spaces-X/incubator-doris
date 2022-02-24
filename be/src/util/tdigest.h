@@ -471,24 +471,27 @@ public:
         uint32_t size = _processed.size();
         memcpy(writer, &size, sizeof(uint32_t));
         writer += sizeof(uint32_t);
-      
-        memcpy(writer, &_processed[0], size * sizeof(Centroid));
-        writer += size * sizeof(Centroid);
+        for (int i = 0; i < size; i++) {
+            memcpy(writer, &_processed[i], sizeof(Centroid));
+            writer += sizeof(Centroid);
+        }
 
         size = _unprocessed.size();
         memcpy(writer, &size, sizeof(uint32_t));
         writer += sizeof(uint32_t);
-
-        memcpy(writer, &_unprocessed[0], size * sizeof(Centroid));
-        writer += size * sizeof(Centroid);
+        //TODO(weixiang): may be once memcpy is enough!
+        for (int i = 0; i < size; i++) {
+            memcpy(writer, &_unprocessed[i], sizeof(Centroid));
+            writer += sizeof(Centroid);
+        }
 
         size = _cumulative.size();
         memcpy(writer, &size, sizeof(uint32_t));
         writer += sizeof(uint32_t);
-
-        memcpy(writer, &_cumulative[0], size * sizeof(Centroid));
-        writer += size * sizeof(Centroid);
-        
+        for (int i = 0; i < size; i++) {
+            memcpy(writer, &_cumulative[i], sizeof(Weight));
+            writer += sizeof(Weight);
+        }
         return writer - dst;
     }
 
