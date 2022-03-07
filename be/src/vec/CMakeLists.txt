@@ -92,6 +92,8 @@ set(VEC_FILES
   exec/vanalytic_eval_node.cpp
   exec/vassert_num_rows_node.cpp
   exec/vrepeat_node.cpp
+  exec/vbroker_scan_node.cpp
+  exec/vbroker_scanner.cpp
   exec/join/vhash_join_node.cpp
   exprs/vectorized_agg_fn.cpp
   exprs/vectorized_fn_call.cpp
