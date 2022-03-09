@@ -361,6 +361,7 @@ void ColumnComplexType<T>::replicate(const uint32_t* counts, size_t target_size,
 
 using ColumnBitmap = ColumnComplexType<BitmapValue>;
 using ColumnHLL = ColumnComplexType<HyperLogLog>;
+using ColumnQuantileState = ColumnComplexType<QuantileState<double>>;
 
 template <typename T>
 struct is_complex : std::false_type {};
@@ -372,6 +373,9 @@ struct is_complex<BitmapValue> : std::true_type {};
 template <>
 struct is_complex<HyperLogLog> : std::true_type {};  
 //DataTypeHLL::FieldType = HyperLogLog
+
+template <>
+struct is_complex<QuantileState<double>> : std::true_type {};  
 
 template <class T>
 constexpr bool is_complex_v = is_complex<T>::value;

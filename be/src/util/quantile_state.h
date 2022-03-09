@@ -33,6 +33,8 @@ class TDigest;
 const static int QUANTILE_STATE_EXPLICIT_NUM = 2048;
 const static int QUANTILE_STATE_COMPRESSION_MIN = 2048;
 const static int QUANTILE_STATE_COMPRESSION_MAX = 10000;
+// using DoubleQuantileState = QuantileState<double>;
+
 
 enum QuantileStateType {
     EMPTY = 0,

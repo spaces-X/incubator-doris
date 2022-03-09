@@ -35,6 +35,7 @@ void register_aggregate_function_HLL_union_agg(AggregateFunctionSimpleFactory& f
 void register_aggregate_function_uniq(AggregateFunctionSimpleFactory& factory);
 void register_aggregate_function_combinator_distinct(AggregateFunctionSimpleFactory& factory);
 void register_aggregate_function_bitmap(AggregateFunctionSimpleFactory& factory);
+void register_aggregate_function_quantile_state(AggregateFunctionSimpleFactory& factory);
 void register_aggregate_function_window_rank(AggregateFunctionSimpleFactory& factory);
 void register_aggregate_function_window_lead_lag(AggregateFunctionSimpleFactory& factory);
 void register_aggregate_function_stddev_variance(AggregateFunctionSimpleFactory& factory);
@@ -53,6 +54,7 @@ AggregateFunctionSimpleFactory& AggregateFunctionSimpleFactory::instance() {
         register_aggregate_function_count(instance);
         register_aggregate_function_uniq(instance);
         register_aggregate_function_bitmap(instance);
+        register_aggregate_function_quantile_state(instance);
         register_aggregate_function_combinator_distinct(instance);
         register_aggregate_function_reader(instance); // register aggregate function for agg reader
         register_aggregate_function_window_rank(instance);
