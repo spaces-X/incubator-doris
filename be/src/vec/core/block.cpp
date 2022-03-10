@@ -950,4 +950,13 @@ std::unique_ptr<Block> Block::create_same_struct_block(size_t size) const {
     return temp_block;
 }
 
+size_t MutableBlock::allocated_bytes() const {
+    size_t res = 0;
+    for (const auto& col : _columns) {
+        res += col->allocated_bytes();
+    }
+
+    return res;
+}
+
 } // namespace doris::vectorized

@@ -403,6 +403,7 @@ public:
         _columns.clear();
         _data_types.clear();
     }
+    size_t allocated_bytes() const;
 };
 
 } // namespace vectorized
