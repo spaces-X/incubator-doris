@@ -1079,8 +1079,7 @@ struct FieldTypeTraits<OLAP_FIELD_TYPE_VARCHAR> : public FieldTypeTraits<OLAP_FI
         case OLAP_FIELD_TYPE_DOUBLE:
         case OLAP_FIELD_TYPE_DECIMAL: {
             auto result = src_type->to_string(src);
-            if (result.size() > variable_len)
-                return OLAP_ERR_INPUT_PARAMETER_ERROR;
+            if (result.size() > variable_len) return OLAP_ERR_INPUT_PARAMETER_ERROR;
             auto slice = reinterpret_cast<Slice*>(dest);
             slice->data = reinterpret_cast<char*>(mem_pool->allocate(result.size()));
             memcpy(slice->data, result.c_str(), result.size());
@@ -1189,7 +1188,8 @@ struct FieldTypeTraits<OLAP_FIELD_TYPE_OBJECT> : public FieldTypeTraits<OLAP_FIE
 };
 
 template <>
-struct FieldTypeTraits<OLAP_FIELD_TYPE_QUANTILE_STATE> : public FieldTypeTraits<OLAP_FIELD_TYPE_VARCHAR> {
+struct FieldTypeTraits<OLAP_FIELD_TYPE_QUANTILE_STATE>
+        : public FieldTypeTraits<OLAP_FIELD_TYPE_VARCHAR> {
     /*
      * quantile_state type only used as value, so
      * cmp/from_string/set_to_max/set_to_min function
