@@ -76,9 +76,9 @@ public:
         __builtin_unreachable();
     }
 
-    static void serialize_as_stream(const QuantileState& value, BufferWritable& buf);
+    static void serialize_as_stream(const QuantileState<double>& value, BufferWritable& buf);
 
-    static void deserialize_as_stream(QuantileState& value, BufferReadable& buf);
+    static void deserialize_as_stream(QuantileState<double>& value, BufferReadable& buf);
 };
 
 } // namespace doris::vectorized

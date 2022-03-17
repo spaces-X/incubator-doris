@@ -29,6 +29,8 @@ AggregateFunctionPtr create_aggregate_function_quantile_union(const std::string&
 }
 
 void register_aggregate_function_quantile_state(AggregateFunctionSimpleFactory& factory) {
-    factory.regist_function("quantile_union", create_aggregate_function_quantile_union);
+    factory.register_function("quantile_union", create_aggregate_function_quantile_union);
+
+}
 
 }

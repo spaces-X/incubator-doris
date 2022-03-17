@@ -30,7 +30,7 @@ struct AggregateFunctionQuantileStateUnionOp {
     //TODO(weixiang): here T is fixed as double
     template <typename T>
     static void add(QuantileState<double>& res, const T& data) {
-        res.add(data);
+        res.add_value(data);
     }
 
     static void add(QuantileState<double>& res, const QuantileState<double>& data) { res.merge(data); }
@@ -56,7 +56,7 @@ struct AggregateFunctionQuantileStateData{
 
     DoubleQuantileState& get() { return value; }
 
-}
+};
 
 template <typename Op>
 class AggregateFunctionQuantileStateOp final
@@ -102,7 +102,7 @@ public:
                 const_cast<AggregateFunctionQuantileStateData<Op>&>(this->data(place)).get());
     }
                         
-}
+};
 
 AggregateFunctionPtr create_aggregate_function_quantile_union(const std::string& name,
                                                             const DataTypes& argument_types,
