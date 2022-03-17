@@ -32,6 +32,8 @@
 #include "vec/common/bit_cast.h"
 #include "vec/core/types.h"
 
+namespace doris::vectorized{
+
 /** Radix sort, has the following functionality:
   * Can sort unsigned, signed numbers, and floats.
   * Can sort an array of fixed length elements that contain something else besides the key.
@@ -44,6 +46,7 @@
 
 /** Used as a template parameter. See below.
   */
+
 struct RadixSortMallocAllocator {
     void* allocate(size_t size) { return malloc(size); }
 
@@ -387,3 +390,5 @@ template <typename T>
 void radix_sort_msd(T* arr, size_t size, size_t limit) {
     RadixSort<RadixSortNumTraits<T>>::execute_msd(arr, size, limit);
 }
+
+} // namespace
