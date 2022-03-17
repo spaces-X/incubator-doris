@@ -53,7 +53,7 @@ public:
     void set_compression(float compression);
     bool deserialize(const Slice& slice);
     size_t serialize(uint8_t* dst) const;
-    void merge(QuantileState<T>& other);
+    void merge(const QuantileState<T>& const_other);
     void add_value(const T& value);
     void clear();
     bool is_valid(const Slice& slice);

@@ -73,7 +73,7 @@ Status FunctionToQuantileState::execute_impl(FunctionContext* context, Block& bl
     } else {
         compression = 2048;
     }
-    if (float < 2048 || float > 10000) {
+    if (compression < 2048 || compression > 10000) {
         return Status::InternalError("Invalid arguments in to_quantile_state(value, compression), where compression should be in [2048, 1000]");
     }
 

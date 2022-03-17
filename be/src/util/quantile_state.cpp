@@ -247,7 +247,8 @@ size_t QuantileState<T>::serialize(uint8_t* dst) const{
 }
 
 template<typename T>
-void QuantileState<T>::merge(QuantileState<T>& other) {
+void QuantileState<T>::merge(const QuantileState<T>& const_other) {
+    QuantileState<T>& other = const_cast<QuantileState<T>&>(const_other);
     switch(other._type) {
     case EMPTY:
         break;
@@ -259,11 +260,11 @@ void QuantileState<T>::merge(QuantileState<T>& other) {
         switch(_type) {
         case EMPTY:
             _type = EXPLICIT;
-            _explicit_data.swap(other._explicit_data);
+            _explicit_data = other._explicit_data;
             break;
         case SINGLE:
             _type = EXPLICIT;
-            _explicit_data.swap(other._explicit_data);
+            _explicit_data = other._explicit_data;
             add_value(_single_data);
             break;
         case EXPLICIT:

@@ -58,7 +58,7 @@ char* DataTypeQuantileState::serialize(const IColumn& column, char* buf) const {
     // serialize each quantile_state obj
     for (size_t i = 0; i < column_num; ++i) {
         auto& quantile_state = const_cast<QuantileState<double>&>(data_column.get_element(i));
-        quantile_state.serialize(buf);
+        quantile_state.serialize((uint8_t*)buf);
         buf += quantile_size_array[i + 1];
     }
 
@@ -94,7 +94,7 @@ void DataTypeQuantileState::serialize_as_stream(const QuantileState<double>& cva
     std::string memory_buffer;
     size_t bytesize = value.get_serialized_size();
     memory_buffer.resize(bytesize);
-    value.serialize(const_cast<uint8_t*>(memory_buffer.data()));
+    value.serialize(reinterpret_cast<uint8_t*>(memory_buffer.data()));
     write_string_binary(memory_buffer, buf);
 }
 
@@ -107,9 +107,9 @@ void DataTypeQuantileState::deserialize_as_stream(QuantileState<double>& value, 
 void DataTypeQuantileState::to_string(const class doris::vectorized::IColumn& column, size_t row_num,
         doris::vectorized::BufferWritable& ostr) const {
     // no use to use const_cast, use assert_cast instead
-    auto& data = assert_cast<QuantileState<double>&>(assert_cast<const ColumnQuantileState&>(column).get_element(row_num));
+    auto& data = const_cast<QuantileState<double>&>(assert_cast<const ColumnQuantileState&>(column).get_element(row_num));
     std::string result(data.get_serialized_size(), '0');
-    data.write((uint8_t*)result.data());
+    data.serialize((uint8_t*)result.data());
 
     ostr.write(result.data(), result.size());
 }

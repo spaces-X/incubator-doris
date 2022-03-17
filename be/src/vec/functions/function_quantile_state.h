@@ -58,6 +58,6 @@ public:
     }
     Status execute_impl(FunctionContext* context, Block& block, const ColumnNumbers& arguments,
                         size_t result, size_t /*input_rows_count*/) override;
-}
+};
 
 }
