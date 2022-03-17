@@ -28,6 +28,7 @@ set(VEC_FILES
   aggregate_functions/aggregate_function_null.cpp
   aggregate_functions/aggregate_function_uniq.cpp
   aggregate_functions/aggregate_function_hll_union_agg.cpp
+  aggregate_functions/aggregate_function_quantile_state.cpp
   aggregate_functions/aggregate_function_bitmap.cpp
   aggregate_functions/aggregate_function_reader.cpp
   aggregate_functions/aggregate_function_window.cpp
@@ -58,6 +59,7 @@ set(VEC_FILES
   core/materialize_block.cpp
   data_types/data_type.cpp
   data_types/data_type_bitmap.cpp
+  data_types/data_type_quantile_state.cpp
   data_types/data_type_hll.cpp
   data_types/data_type_nothing.cpp
   data_types/data_type_nothing.cpp
@@ -121,6 +123,7 @@ set(VEC_FILES
   functions/function_encryption.cpp
   functions/function_regexp.cpp
   functions/function_hex.cpp
+  functions/function_quantile_state.cpp
   functions/function_string.cpp
   functions/function_timestamp.cpp
   functions/function_utility.cpp
