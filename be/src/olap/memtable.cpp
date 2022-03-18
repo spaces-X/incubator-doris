@@ -40,7 +40,7 @@ MemTable::MemTable(int64_t tablet_id, Schema* schema, const TabletSchema* tablet
           _tablet_schema(tablet_schema),
           _slot_descs(slot_descs),
           _keys_type(keys_type),
-          _mem_tracker(MemTracker::create_tracker(-1, "MemTable", parent_tracker)),
+          _mem_tracker(MemTracker::CreateTracker(-1, "MemTable", parent_tracker)),
           _buffer_mem_pool(new MemPool(_mem_tracker.get())),
           _table_mem_pool(new MemPool(_mem_tracker.get())),
           _schema_size(_schema->schema_size()),
@@ -137,7 +137,7 @@ void MemTable::insert(const vectorized::Block* block, size_t row_pos, size_t num
     size_t oldsize = block->allocated_bytes();
     _input_mutable_block.add_rows(block, row_pos, num_rows);
     size_t newsize = block->allocated_bytes();
-    _mem_tracker->consume(newsize - oldsize);
+    _mem_tracker->Consume(newsize - oldsize);
 
     for(int i = 0; i < num_rows; i++){       
         RowInBlock* row_in_block_ptr = new RowInBlock(cursor_in_mutableblock + i);
