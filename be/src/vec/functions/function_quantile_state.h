@@ -20,10 +20,7 @@
 #include <functional>
 #include <memory>
 
-#include "runtime/string_search.hpp"
-#include "runtime/string_value.h"
 #include "vec/columns/column_const.h"
-#include "vec/columns/column_set.h"
 #include "vec/columns/columns_number.h"
 #include "vec/data_types/data_type_nullable.h"
 #include "vec/data_types/data_type_quantile_state.h"
