@@ -358,9 +358,6 @@ struct WindowFunctionLastData : Data {
         this->set_value(columns, frame_end - 1);
     }
     void add(int64_t row, const IColumn** columns) {
-        if (this->has_set_value()) {
-            return;
-        }
         this->set_value(columns, row);
     }
     static const char* name() { return "last_value"; }
@@ -419,21 +416,6 @@ AggregateFunctionPtr create_aggregate_function_replace(const std::string& name,
                                                        const bool result_is_nullable);
 
 AggregateFunctionPtr create_aggregate_function_replace_nullable(const std::string& name,
-                                                                const DataTypes& argument_types,
-                                                                const Array& parameters,
-                                                                const bool result_is_nullable);
-
-AggregateFunctionPtr create_aggregate_function_replace_last_if_not_null(const std::string& name,
-                                                                   const DataTypes& argument_types,
-                                                                   const Array& parameters,
-                                                                   const bool result_is_nullable);
-
-AggregateFunctionPtr create_aggregate_function_replace_last(const std::string& name,
-                                                       const DataTypes& argument_types,
-                                                       const Array& parameters,
-                                                       const bool result_is_nullable);
-
-AggregateFunctionPtr create_aggregate_function_replace_last_nullable(const std::string& name,
                                                                 const DataTypes& argument_types,
                                                                 const Array& parameters,
                                                                 const bool result_is_nullable);
