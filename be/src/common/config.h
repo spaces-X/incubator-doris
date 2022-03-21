@@ -697,6 +697,8 @@ CONF_String(function_service_protocol, "h2:grpc");
 // use which load balancer to select server to connect
 CONF_String(rpc_load_balancer, "rr");
 
+CONF_mBool(enable_vectorized_load, "false");
+
 } // namespace config
 
 } // namespace doris
