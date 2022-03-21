@@ -32,62 +32,29 @@ namespace doris::vectorized {
 
 Status FunctionQuantilePercentile::execute_impl(FunctionContext* context, Block& block, const ColumnNumbers& arguments,
                         size_t result, size_t input_rows_count) {
-    // const auto values_col = block.get_by_position(arguments[0]).column->convert_to_full_column_if_const();
-
-    // const auto* values = check_and_get_column<ColumnQuantileState>(values_col.get());
-
-    // float percentile_value;
-    // if (!context->is_arg_constant(1) || !values) {
-    //     return Status::InternalError("Not supported input arguments types. It should be used like quantile_percent(col, percentage), where `col` is quantile_state type and percentage is a constant arg.");
-    // } else {
-    //     percentile_value = reinterpret_cast<const FloatVal*>(context->get_constant_arg(1))->val;
-    //     if (percentile_value > 1 || percentile_value <0)
-    //     {
-    //         return Status::InternalError("Invalid arguments in quantile_percent(column, percentage), where percentage should be in [0,1]");
-    //     }
-    // }
-
-    // auto return_col_res = ColumnVector<Float64>::create();
-    // auto data = values->get_data();
-    // auto result_data = return_col_res->get_data();
-
-    // size_t size = data.size();
-    // result_data.reserve(size);
-    // for (size_t i = 0; i < size; i++) {
-    //     result_data.push_back(data[i].get_explicit_value_by_percentile(percentile_value));
-    // }
-    // block.replace_by_position(result, std::move(return_col_res));
-    // return Status::OK();
 
     float percentile_value;
     if (!context->is_arg_constant(1)) {
         return Status::InternalError("Not supported input arguments types. It should be used like quantile_percent(col, percentage), where `col` is quantile_state type and percentage is a constant arg.");
     } else {
         percentile_value = reinterpret_cast<const FloatVal*>(context->get_constant_arg(1))->val;
-        if (percentile_value > 1 || percentile_value <0)
+        if (percentile_value > 1 || percentile_value < 0)
         {
             return Status::InternalError("Invalid arguments in quantile_percent(column, percentage), where percentage should be in [0,1]");
         }
     }
     auto res_data_column = ColumnFloat64::create();
     auto& res = res_data_column->get_data();
-    auto data_null_map = ColumnUInt8::create(input_rows_count, 0);
-    auto& null_map = data_null_map->get_data();
-
-    auto column = block.get_by_position(arguments[0]).column->convert_to_full_column_if_const();
-    if (auto* nullable = check_and_get_column<const ColumnNullable>(*column)) {
-        VectorizedUtils::update_null_map(null_map, nullable->get_null_map_data());
-        column = nullable->get_nested_column_ptr();
+    MutableColumnPtr column = (*std::move(block.get_by_position(arguments[0]).column)).assume_mutable();
+    if (column->is_nullable()) {
+        return Status::InternalError("Quantile_state Column do not support nullable");
     }
-    auto str_col = assert_cast<const ColumnQuantileState*>(column.get());
-    const auto& col_data = str_col->get_data();
+
+    auto str_col = assert_cast<ColumnQuantileState*>(column.get());
+    auto& col_data = str_col->get_data();
 
     res.reserve(input_rows_count);
     for (size_t i = 0; i < input_rows_count; ++i) {
-        if (null_map[i]) {
-            res.push_back(nanf);
-            continue;
-        }
         res.push_back(col_data[i].get_value_by_percentile(percentile_value));
     }
     block.replace_by_position(result, std::move(res_data_column));
@@ -141,8 +108,7 @@ Status FunctionToQuantileState::execute_impl(FunctionContext* context, Block& bl
     }
     auto res_null_map = ColumnUInt8::create(input_rows_count, 0);
     auto res_data_column = ColumnQuantileState::create();
-    auto& null_map = res_null_map->get_data();
-    auto& result_data = res_data_column->get_data();
+    std::vector<QuantileState<double>>& result_data = reinterpret_cast<std::vector<QuantileState<double>>&>(res_data_column->get_data());
 
     ColumnPtr argument_column =
             block.get_by_position(arguments[0]).column->convert_to_full_column_if_const();
@@ -160,12 +126,11 @@ Status FunctionToQuantileState::execute_impl(FunctionContext* context, Block& bl
         if(parse_result != StringParser::PARSE_SUCCESS) {
              return Status::RuntimeError("Can not parser the origin data into doulbe type");
         }
-        result_data.emplace_back({compression});
+        result_data.emplace_back(compression);
         result_data.back().add_value(data_value);
     }
 
-    block.get_by_position(result).column =
-            ColumnNullable::create(std::move(res_data_column), std::move(res_null_map));
+    block.replace_by_position(result, std::move(res_data_column));
     return Status::OK();
 }
 

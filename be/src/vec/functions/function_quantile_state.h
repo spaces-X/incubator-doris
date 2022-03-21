@@ -33,6 +33,12 @@ namespace doris::vectorized {
 
 class FunctionQuantilePercentile : public IFunction {
 public:
+    static constexpr auto name = "quantile_percent";
+
+    String get_name() const override{ return name; }
+
+    static FunctionPtr create() { return std::make_shared<FunctionQuantilePercentile>(); }
+
     size_t get_number_of_arguments() const override {return 2;}
 
     DataTypePtr get_return_type_impl(const DataTypes& /*agruments*/) const override {
@@ -43,12 +49,14 @@ public:
                         size_t result, size_t /*input_rows_count*/) override;
 
 
-protected:
-
 
 };
 class FunctionToQuantileState : public IFunction {
 public:
+    static constexpr auto name = "to_quantile_state";
+    String get_name() const override{ return name; }
+
+    static FunctionPtr create() { return std::make_shared<FunctionToQuantileState>(); }
     size_t get_number_of_arguments() const override {return 2;}
     DataTypePtr get_return_type_impl(const DataTypes& /*agruments*/) const override {
         return std::make_shared<DataTypeQuantileState>();
