@@ -28,6 +28,7 @@
 #include "vec/core/block.h"
 #include "vec/common/string_ref.h"
 #include "vec/aggregate_functions/aggregate_function.h"
+#include "vec/aggregate_functions/block_aggregator.h"
 namespace doris {
 
 struct ContiguousRow;
@@ -53,7 +54,12 @@ public:
     
     void insert(const Tuple* tuple);
     //insert tuple from (row_pos) to (row_pos+num_rows)
-    void insert(const vectorized::Block* block, size_t row_pos, size_t num_rows);
+    bool insert(const vectorized::Block* block, size_t row_pos, size_t num_rows);
+
+    bool is_full() const;
+    size_t bytes_allocated() const;
+
+    void finalize();
     
     /// Flush
     OLAPStatus flush();
@@ -150,6 +156,16 @@ private:
     //for vectorized
     void insert_one_row_from_block(RowInBlock* row_in_block);
     void _aggregate_two_rowInBlock(RowInBlock* new_row, RowInBlock* row_in_skiplist);
+    void _sort(const bool finalize);
+    void _sort_block_by_rows();
+
+    void _merge();
+
+    void _agg(const bool finalize);
+
+
+    void _append_sorted_block(MutableBlock* src, MutableBlock* dst);
+
 
     int64_t _tablet_id;
     Schema* _schema;
@@ -195,6 +211,24 @@ private:
     //for vectorized 
     vectorized::MutableBlock _input_mutable_block;
     vectorized::MutableBlock _output_mutable_block;
+
+    struct OrderedIndexItem {
+        uint32_t index_in_block;
+        uint32_t incoming_index; // used for sort by column 
+    };
+
+    using OrderedIndex = std::vector<OrderIndexItem>;
+
+    OrderedIndex _index_for_sort;
+
+    std::vector<int> _sorted_index_in_block;
+
+    vectorized::MutableBlockPtr _block;
+
+    vectorized::MutableBlockPtr _sorted_block;
+
+    std::unique_ptr<BlockAggregator> _block_aggregator;
+    
     vectorized::Block collect_skiplist_results();
     bool _is_first_insertion;
 
@@ -202,6 +236,9 @@ private:
     std::vector<vectorized::AggregateFunctionPtr> _agg_functions;
     std::vector<RowInBlock*> rowInBlocks;
     size_t _mem_usage;
+    size_t _block_bytes_usage = 0;
+    size_t _agg_bytes_usage = 0;
+    int _merge_count = 0;
 }; // class MemTable
 
 

@@ -49,12 +49,15 @@ OLAPStatus VDeltaWriter::write_block(const vectorized::Block* block, const std::
     }
 
     int start = 0, end = 0;
+    bool flush = false;
 
     const size_t num_rows = row_idxs.size();
     for (; start < num_rows;) {
         auto count = end + 1 - start;
         if (end == num_rows - 1 || (row_idxs[end + 1] - row_idxs[start]) != count) {
-            _mem_table->insert(block, row_idxs[start], count);
+            if (_mem_table->insert(block, row_idxs[start], count)) {
+                flush = true;
+            }
             start += count;
             end = start;
         } else {
@@ -62,7 +65,8 @@ OLAPStatus VDeltaWriter::write_block(const vectorized::Block* block, const std::
         }
     }
 
-    if (_mem_table->memory_usage() >= config::write_buffer_size) {
+    if ( flush || _mem_table->is_full()) {
+        _mem_table->finalize();
         RETURN_NOT_OK(_flush_memtable_async());
         _reset_mem_table();
     }

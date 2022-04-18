@@ -341,11 +341,23 @@ public:
     size_t rows() const;
     size_t columns() const { return _columns.size(); }
 
+    std::unique_ptr<MutableBlock> create_same_struct_block(size_t size) const;
+
+    void clear_column_data() noexcept;
+
     bool empty() { return rows() == 0; }
 
     MutableColumns& mutable_columns() { return _columns; }
 
     void set_muatable_columns(MutableColumns&& columns) { _columns = std::move(columns); }
+
+    void append_from_columns(Columns& columns, size_t length) {
+        DCHECK(_columns.size() == columns.size());
+        for (size_t i = 0; i < _columns.size(); i++) {
+            DCHECK(columns[i]->size() >= length);
+            _columns[i]->insert_range_from(columns[i], 0, length);
+        }
+    }
 
     DataTypes& data_types() { return _data_types; }
 
