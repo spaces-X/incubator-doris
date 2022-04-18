@@ -897,6 +897,14 @@ Block MutableBlock::to_block(int start_column, int end_column) {
     return {columns_with_schema};
 }
 
+void MutableBlock::clear_column_data() noexcept {
+    for (auto& col : _columns) {
+        if (col) {
+            col->clear();
+        }
+    }
+}
+
 std::string MutableBlock::dump_data(size_t row_limit) const {
     std::vector<std::string> headers;
     std::vector<size_t> headers_size;
@@ -954,6 +962,18 @@ std::unique_ptr<Block> Block::create_same_struct_block(size_t size) const {
         temp_block->insert({std::move(column), d.type, d.name});
     }
     return temp_block;
+}
+
+//TODO(weixiang): unique_ptr?
+std::shared_ptr<MutableBlock> MutableBlock::create_same_struct_block(size_t size) const {
+    Block temp_block;
+    for (const auto& d : _data_types) {
+        auto column = d->create_column();
+        column->resize(size);
+        temp_block.insert({std::move(column), d, ""});
+    }
+    auto result = std::make_shared<MutableBlock>(std::move(temp_block));
+    return result;
 }
 
 void Block::shrink_char_type_column_suffix_zero(const std::vector<size_t>& char_type_idx) {
