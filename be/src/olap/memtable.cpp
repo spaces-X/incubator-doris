@@ -55,6 +55,7 @@ MemTable::MemTable(int64_t tablet_id, Schema* schema, const TabletSchema* tablet
         _vec_row_comparator = std::make_shared<RowInBlockComparator>(_schema);
         _vec_skip_list = new VecTable(_vec_row_comparator.get(), _table_mem_pool.get(),
                                 _keys_type == KeysType::DUP_KEYS);
+        _block_aggregator = std::make_unique<vectorized::BlockAggregator>(_schema, _tablet_schema, true);
     }else{
         _vec_skip_list =nullptr;
         if (tablet_schema->sort_type() == SortType::ZORDER) {
@@ -124,32 +125,142 @@ int MemTable::RowInBlockComparator::operator()(const RowInBlock* left, const Row
                             *_pblock, -1); 
 }
 
-void MemTable::insert(const vectorized::Block* block, size_t row_pos, size_t num_rows)
-{
-    if (_is_first_insertion)
-    {
+bool MemTable::insert(const vectorized::Block* block, size_t row_pos, size_t num_rows) {
+    if (_is_first_insertion) {
         _is_first_insertion = false;
         auto cloneBlock = block->clone_without_columns();
-        _input_mutable_block = vectorized::MutableBlock::build_mutable_block(&cloneBlock);
-        _vec_row_comparator->set_block(&_input_mutable_block);
-        _output_mutable_block = vectorized::MutableBlock::build_mutable_block(&cloneBlock);
+        _block = std::make_shared<vectorized::MutableBlock>(&cloneBlock);
         if (_keys_type != KeysType::DUP_KEYS){
             _init_agg_functions(block);
         }
     }
-    size_t cursor_in_mutableblock = _input_mutable_block.rows();
-    size_t oldsize = _input_mutable_block.allocated_bytes();
-    _input_mutable_block.add_rows(block, row_pos, num_rows);
-    size_t newsize = _input_mutable_block.allocated_bytes();
-    _mem_usage += newsize - oldsize;
-    _mem_tracker->consume(newsize - oldsize);
-
-    for(int i = 0; i < num_rows; i++){       
-        RowInBlock* row_in_block_ptr = new RowInBlock(cursor_in_mutableblock + i);
-        rowInBlocks.push_back(row_in_block_ptr);
-        insert_one_row_from_block(row_in_block_ptr);
-    }   
+    _block->add_rows(block, row_pos, num_rows);
+    _block_bytes_usage += block->allocated_bytes() * num_rows / block->rows();
+    // Memtalbe is full, do not flush immediately
+    // First try to merge these blocks
+    // If the merged memtable is still full or we can not benefit a lot from merge at first
+    // Then flush the memtable into disk.
+    bool is_flush = false;
+    if (is_full()) {
+        size_t before_merge_bytes = bytes_allocated();
+        _merge();
+        size_t after_merged_bytes = bytes_allocated();
+        // TODO(weixiang): magic number here, make it configurable later.
+        if (is_full() || (after_merged_bytes >= before_merge_bytes * 2 / 3 && _merge_count == 1)) {
+            is_flush = true;
+        }
+    }
+    return is_flush;
 }
+
+
+size_t MemTable::bytes_allocated() const {
+    
+    return _block_bytes_usage + _block_aggregator->get_bytes_usage();
+}
+
+bool MemTable::is_full() const {
+    return bytes_allocated() > config::write_buffer_size; 
+}
+
+void MemTable::_merge() {
+    if (_block == nullptr || _keys_type == KeysType::DUP_KEYS) {
+        return;
+    }
+    _sort(false);
+    _agg(false);
+    _merge_count++;
+
+}
+
+void MemTable::_agg(const bool finalize) {
+    // note that the _block had been sorted before.
+    if (_sorted_block == nullptr || _sorted_block->rows() <= 0) {
+        return;
+    }
+    vectorized::Block sorted_block = _sorted_block->to_block();
+    _block_aggregator->append_block(&sorted_block);
+    _block_aggregator->partial_sort_merged_aggregate();
+    if (finalize) {
+        _sorted_block.reset();
+    } else {
+        _sorted_block->clear_column_data();
+    }
+    
+}
+
+void MemTable::_sort(const bool finalize) {
+    _index_for_sort.resize(_block->rows());
+    for (uint32_t i = 0; i < _block->rows(); i++) {
+        _index_for_sort[i] = {i, i};
+    }
+
+    _sort_block_by_rows();
+    _sorted_block = _block->create_same_struct_block(_block->rows());
+    _append_sorted_block(_block.get(), _sorted_block.get());
+    if (finalize) {
+        _block.reset();
+    } else {
+        _block->clear_column_data();
+    }
+    _block_bytes_usage = 0;
+
+}
+
+void MemTable::_sort_block_by_rows() {
+    std::sort(_index_for_sort.begin(), _index_for_sort.end(),
+              [this](const MemTable::OrderedIndexItem& left,
+                     const MemTable::OrderedIndexItem& right) {
+                  return _block->compare_at(left.index_in_block, right.index_in_block,
+                                            _schema->num_key_columns(), *_block.get(), -1);
+              });
+}
+
+void MemTable::_append_sorted_block(vectorized::MutableBlock* src, vectorized::MutableBlock* dst) {
+    size_t row_num = src->rows();
+    DCHECK(_sorted_index_in_block.size() == row_num);
+    _sorted_index_in_block.clear();
+    _sorted_index_in_block.reserve(row_num);
+    for (size_t i = 0; i < row_num; i++) {
+        _sorted_index_in_block.push_back(_index_for_sort[i].index_in_block);
+    }
+    vectorized::Block src_block = src->to_block();
+    dst->add_rows(&src_block, _sorted_index_in_block.data(), _sorted_index_in_block.data() + row_num);
+}
+
+void MemTable::finalize() {
+    //TODO(weixiang): check here
+    if (_block == nullptr) {
+        return;
+    }
+
+    if(_keys_type != KeysType::DUP_KEYS) {
+        // agg mode
+        if (_block->rows() > 0) {
+            _merge();
+        }
+        if (_merge_count > 1) {
+            _block = _block_aggregator->get_partial_agged_block();
+            _block_aggregator->reset_aggregator();
+            _sort(true);
+            _agg(true);
+        } else {
+            _block.reset();
+            _sorted_block.reset();
+        }
+
+        _block_bytes_usage = 0;
+        _sorted_block = _block_aggregator->get_partial_agged_block();
+
+
+        
+    } else {
+        // dup mode
+        _sort(true);
+    }
+
+}
+
 
 void MemTable::insert_one_row_from_block(RowInBlock* row_in_block_ptr)
 {
