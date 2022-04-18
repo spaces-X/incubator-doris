@@ -198,14 +198,25 @@ Status DeltaWriter::write(const vectorized::Block* block, const std::vector<int>
         return Status::OLAPInternalError(OLAP_ERR_ALREADY_CANCELLED);
     }
 
-    _mem_table->insert(block, row_idxs);
-
-    if (_mem_table->need_to_agg()) {
-        _mem_table->shrink_memtable_by_agg();
-        if (_mem_table->is_flush()) {
-            RETURN_NOT_OK(_flush_memtable_async());
-            _reset_mem_table();
+    int start = 0, end = 0;
+    bool flush = false;
+    const size_t num_rows = row_idxs.size();
+    for (; start < num_rows;) {
+        auto count = end + 1 - start;
+        if (end == num_rows - 1 || (row_idxs[end + 1] - row_idxs[start]) != count) {
+            if (_mem_table->insert(block, row_idxs[start], count)) {
+                flush = true;
+            }
+            start += count;
+            end = start;
+        } else {
+            end++;
         }
+    }
+
+    if (flush || _mem_table->is_full()) {
+        RETURN_NOT_OK(_flush_memtable_async());
+        _reset_mem_table();
     }
 
     return Status::OK();

@@ -6,7 +6,7 @@
 # "License"); you may not use this file except in compliance
 # with the License.  You may obtain a copy of the License at
 #
-#   http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
@@ -16,6 +16,7 @@
 # under the License.
 # where to put generated libraries
 set(LIBRARY_OUTPUT_PATH "${BUILD_DIR}/src/vec")
+
 # where to put generated binaries
 set(EXECUTABLE_OUTPUT_PATH "${BUILD_DIR}/src/vec")
 
@@ -41,6 +42,7 @@ set(VEC_FILES
   aggregate_functions/aggregate_function_simple_factory.cpp
   aggregate_functions/aggregate_function_java_udaf.h
   aggregate_functions/aggregate_function_orthogonal_bitmap.cpp
+  aggregate_functions/block_aggregator.cpp
   columns/collator.cpp
   columns/column.cpp
   columns/column_array.cpp
@@ -206,5 +208,5 @@ set(VEC_FILES
   runtime/vsorted_run_merger.cpp)
 
 add_library(Vec STATIC
-    ${VEC_FILES}
+  ${VEC_FILES}
 )
