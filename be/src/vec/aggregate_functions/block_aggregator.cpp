@@ -61,11 +61,6 @@ void BlockAggregator::append_block(Block* block) {
     if (block == nullptr || block->rows() <= 0){
         return;
     }
-    if (_is_first_append) {
-        // this means it is appending block for the first time
-        _aggregated_block = std::make_shared<MutableBlock>(block);
-        _is_first_append = false;
-    }
     _agg_data_counters.reserve(_agg_data_counters.size() + block->rows());
     size_t key_num = _schema->num_key_columns();
 
@@ -77,7 +72,13 @@ void BlockAggregator::append_block(Block* block) {
         }
         same_rows++;
     }
-    _aggregated_block->add_rows(block, 0, block->rows());
+    if (_is_first_append) {
+        // this means it is appending block for the first time
+        _aggregated_block = std::make_shared<MutableBlock>(block);
+        _is_first_append = false;
+    } else {
+        _aggregated_block->add_rows(block, 0, block->rows());
+    }
 }
 
 /**
@@ -94,7 +95,7 @@ void BlockAggregator::partial_sort_merged_aggregate() {
     DCHECK(!_agg_data_counters.empty());
     std::vector<int> first_row_idx; // TODO(weixiang): add into member variables
     std::vector<MutableColumnPtr> aggregated_cols;
-    first_row_idx.resize(_agg_data_counters.size());
+    first_row_idx.reserve(_agg_data_counters.size());
     int row_pos = _cumulative_agg_num;
     for (size_t i = 0; i < _agg_data_counters.size(); i++) {
         first_row_idx.push_back(row_pos);
@@ -131,7 +132,7 @@ void BlockAggregator::partial_sort_merged_aggregate() {
         
         for (size_t i = 0; i < agged_row_num; i++) {
             AggregateDataPtr place = _agg_places[cid - _key_cols_num] + place_size * i;
-            _agg_functions[cid - _key_cols_num]->add_batch_single_place(
+            _agg_functions[cid]->add_batch_single_place(
                     _agg_data_counters[i], place,
                     const_cast<const doris::vectorized::IColumn**>(&src_value_col_ptr), nullptr);
         }
@@ -139,7 +140,7 @@ void BlockAggregator::partial_sort_merged_aggregate() {
 
     // move to result column
     for (size_t value_col_idx = 0; value_col_idx < _value_cols_num; value_col_idx++) {
-        size_t place_size = _agg_functions[value_col_idx]->size_of_data();
+        size_t place_size = _agg_functions[value_col_idx + _key_cols_num]->size_of_data();
         MutableColumnPtr dst_value_col_ptr =
                 _schema->get_data_type_ptr(*_schema->column(col_ids[value_col_idx + _key_cols_num]))
                         ->create_column();

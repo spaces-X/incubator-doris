@@ -218,7 +218,6 @@ void MemTable::_sort_block_by_rows() {
 
 void MemTable::_append_sorted_block(vectorized::MutableBlock* src, vectorized::MutableBlock* dst) {
     size_t row_num = src->rows();
-    DCHECK(_sorted_index_in_block.size() == row_num);
     _sorted_index_in_block.clear();
     _sorted_index_in_block.reserve(row_num);
     for (size_t i = 0; i < row_num; i++) {
@@ -425,9 +424,8 @@ void dump(const vectorized::Block& block, int64_t tablet_id) {
 }
 
 OLAPStatus MemTable::_vflush(){
-    //skip empty tablet
-    if (_rows == 0)
-    {
+    finalize();
+    if (_sorted_block == nullptr) {
         return OLAP_SUCCESS;
     }
     VLOG_CRITICAL << "begin to flush memtable for tablet: " << _tablet_id
@@ -436,7 +434,7 @@ OLAPStatus MemTable::_vflush(){
     int64_t duration_ns = 0;
     {
         SCOPED_RAW_TIMER(&duration_ns);
-        vectorized::Block block = collect_skiplist_results();
+        vectorized::Block block = _sorted_block->to_block();
         OLAPStatus st = _rowset_writer->add_block(&block);
         RETURN_NOT_OK(st);
         _flush_size = block.allocated_bytes();
