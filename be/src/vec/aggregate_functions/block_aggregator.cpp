@@ -166,6 +166,9 @@ void BlockAggregator::partial_sort_merged_aggregate() {
 
 
 size_t BlockAggregator::get_bytes_usage() const{
+    if(UNLIKELY(_aggregated_block == nullptr)) {
+        return 0;
+    }
     return _aggregated_block->allocated_bytes();
 }
 
