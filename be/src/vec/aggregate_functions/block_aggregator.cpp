@@ -151,7 +151,8 @@ void BlockAggregator::partial_sort_merged_aggregate() {
         }
         aggregated_cols.emplace_back(std::move(dst_value_col_ptr));
     }
-    
+
+    _aggregated_block->clear_column_data();
     _aggregated_block->append_from_columns(aggregated_cols, agged_row_num);
     _agg_data_counters.clear();
     _cumulative_agg_num += agged_row_num;
