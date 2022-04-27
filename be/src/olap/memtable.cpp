@@ -196,7 +196,7 @@ void MemTable::_sort(const bool finalize) {
     }
 
     _sort_block_by_rows();
-    _sorted_block = _block->create_same_struct_block(_block->rows());
+    _sorted_block = _block->create_same_struct_block(0);
     _append_sorted_block(_block.get(), _sorted_block.get());
     if (finalize) {
         _block.reset();
