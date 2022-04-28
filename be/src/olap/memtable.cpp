@@ -211,8 +211,12 @@ void MemTable::_sort_block_by_rows() {
     std::sort(_index_for_sort.begin(), _index_for_sort.end(),
               [this](const MemTable::OrderedIndexItem& left,
                      const MemTable::OrderedIndexItem& right) {
-                  return _block->compare_at(left.index_in_block, right.index_in_block,
-                                            _schema->num_key_columns(), *_block.get(), -1);
+                  int res = _block->compare_at(left.index_in_block, right.index_in_block,
+                                               _schema->num_key_columns(), *_block.get(), -1);
+                  if (res != 0) {
+                      return res < 0;
+                  }
+                  return left.incoming_index < right.incoming_index;
               });
 }
 
