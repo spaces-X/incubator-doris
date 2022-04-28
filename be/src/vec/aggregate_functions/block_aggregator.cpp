@@ -66,7 +66,7 @@ void BlockAggregator::append_block(Block* block) {
 
     size_t same_rows = 1;
     for (size_t i = 0; i < block->rows(); i++) {
-        if ( i+i == block->rows() || block->compare_at(i, i+1, key_num, *block, -1) != 0) {
+        if ( i+1 == block->rows() || block->compare_at(i, i+1, key_num, *block, -1) != 0) {
             _agg_data_counters.push_back(same_rows);
             same_rows = 0;
         }
