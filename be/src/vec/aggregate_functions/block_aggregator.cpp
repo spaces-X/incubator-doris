@@ -129,12 +129,15 @@ void BlockAggregator::partial_sort_merged_aggregate() {
     for (size_t cid = _key_cols_num; cid < _cols_num; cid++) {
         size_t place_size = _agg_functions[cid]->size_of_data();
         auto* src_value_col_ptr = _aggregated_block->mutable_columns()[cid].get();
+        size_t agg_begin_idx = 0;
         
         for (size_t i = 0; i < agged_row_num; i++) {
             AggregateDataPtr place = _agg_places[cid - _key_cols_num] + place_size * i;
-            _agg_functions[cid]->add_batch_single_place(
-                    _agg_data_counters[i], place,
+            _agg_functions[cid]->add_batch_range(
+                    agg_begin_idx,
+                    agg_begin_idx + _agg_data_counters[i] - 1, place,
                     const_cast<const doris::vectorized::IColumn**>(&src_value_col_ptr), nullptr);
+            agg_begin_idx += _agg_data_counters[i];
         }
     }
 
