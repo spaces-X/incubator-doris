@@ -23,6 +23,7 @@
 #include "olap/olap_define.h"
 #include "olap/skiplist.h"
 #include "runtime/mem_tracker.h"
+#include "util/runtime_profile.h"
 #include "util/tuple_row_zorder_compare.h"
 #include "vec/aggregate_functions/aggregate_function.h"
 #include "vec/common/string_ref.h"
@@ -162,6 +163,21 @@ private:
 
     void _append_sorted_block(vectorized::MutableBlock* src, vectorized::MutableBlock* dst);
 
+    void _init_profile() {
+        _profile.reset(new RuntimeProfile("Memtable"));
+        _insert_time = ADD_TIMER(_profile, "insert time");
+        _sort_time = ADD_TIMER(_profile, "sort time");
+        _agg_time = ADD_TIMER(_profile, "agg time");
+        _finalize_time = ADD_TIMER(_profile, "finalize time");
+    }
+
+    void print_profile() {
+        std::stringstream ss;
+        _profile->pretty_print(&ss);
+        LOG(INFO) << ss.str();
+    }
+
+
     int64_t _tablet_id;
     Schema* _schema;
     const TabletSchema* _tablet_schema;
@@ -239,6 +255,14 @@ private:
     size_t _block_bytes_usage = 0;
     size_t _agg_bytes_usage = 0;
     int _merge_count = 0;
+
+    std::unique_ptr<RuntimeProfile> _profile;
+    RuntimeProfile::Counter* _insert_time;
+    RuntimeProfile::Counter* _sort_time;
+    RuntimeProfile::Counter* _agg_time;
+    RuntimeProfile::Counter* _finalize_time;
+
+
 }; // class MemTable
 
 inline std::ostream& operator<<(std::ostream& os, const MemTable& table) {
