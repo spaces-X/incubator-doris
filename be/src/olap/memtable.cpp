@@ -225,9 +225,7 @@ void MemTable::_append_sorted_block(vectorized::MutableBlock* src, vectorized::M
     for (size_t i = 0; i < row_num; i++) {
         _sorted_index_in_block.push_back(_index_for_sort[i].index_in_block);
     }
-    vectorized::Block src_block = src->to_block();
-    dst->add_rows(&src_block, _sorted_index_in_block.data(),
-                  _sorted_index_in_block.data() + row_num);
+    dst->add_rows(src, _sorted_index_in_block.data(), _sorted_index_in_block.data() + row_num);
 }
 
 void MemTable::finalize() {
