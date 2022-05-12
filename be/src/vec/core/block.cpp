@@ -947,6 +947,24 @@ void MutableBlock::add_rows(const Block* block, size_t row_begin, size_t length)
     }
 }
 
+void MutableBlock::add_rows(MutableBlock* block, const int* row_begin, const int* row_end) {
+    for (size_t i = 0; i < _columns.size(); ++i) {
+        auto& dst = _columns[i];
+        auto& src = *(block->get_column_by_position(i).get());
+        dst->insert_indices_from(src, row_begin, row_end);
+    }
+}
+
+void MutableBlock::add_rows(MutableBlock* block, size_t row_begin, size_t length) {
+    for (size_t i = 0; i < _columns.size(); ++i) {
+        auto& dst = _columns[i];
+        auto& src = *(block->get_column_by_position(i).get());
+        dst->insert_range_from(src, row_begin, length);
+    }
+}
+
+
+
 Block MutableBlock::to_block(int start_column) {
     return to_block(start_column, _columns.size());
 }
