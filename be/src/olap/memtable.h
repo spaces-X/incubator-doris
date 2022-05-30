@@ -23,6 +23,7 @@
 #include "olap/olap_define.h"
 #include "olap/skiplist.h"
 #include "runtime/mem_tracker.h"
+#include "util/pdqsort.h"
 #include "util/runtime_profile.h"
 #include "util/tuple_row_zorder_compare.h"
 #include "vec/aggregate_functions/aggregate_function.h"
@@ -177,7 +178,6 @@ private:
         LOG(INFO) << ss.str();
     }
 
-
     int64_t _tablet_id;
     Schema* _schema;
     const TabletSchema* _tablet_schema;
@@ -261,7 +261,6 @@ private:
     RuntimeProfile::Counter* _sort_time;
     RuntimeProfile::Counter* _agg_time;
     RuntimeProfile::Counter* _finalize_time;
-
 
 }; // class MemTable
 
