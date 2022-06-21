@@ -355,7 +355,6 @@ public:
     size_t rows() const;
     size_t columns() const { return _columns.size(); }
 
-
     std::shared_ptr<MutableBlock> create_same_struct_block(size_t size) const;
 
     void clear_column_data() noexcept;
