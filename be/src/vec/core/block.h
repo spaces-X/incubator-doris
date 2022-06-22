@@ -460,8 +460,6 @@ public:
         _data_types.clear();
     }
 
-    void clear_column_data() noexcept;
-
     size_t allocated_bytes() const;
 };
 

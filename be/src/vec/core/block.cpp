@@ -963,8 +963,6 @@ void MutableBlock::add_rows(MutableBlock* block, size_t row_begin, size_t length
     }
 }
 
-
-
 Block MutableBlock::to_block(int start_column) {
     return to_block(start_column, _columns.size());
 }
@@ -1085,14 +1083,6 @@ size_t MutableBlock::allocated_bytes() const {
     }
 
     return res;
-}
-
-void MutableBlock::clear_column_data() noexcept {
-    for (auto& col : _columns) {
-        if (col) {
-            col->clear();
-        }
-    }
 }
 
 } // namespace doris::vectorized

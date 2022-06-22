@@ -232,8 +232,6 @@ private:
 
     std::unique_ptr<vectorized::BlockAggregator> _block_aggregator;
 
-    vectorized::Block _collect_vskiplist_results();
-
     bool _is_first_insertion;
 
     void _init_agg_functions(const vectorized::Block* block);
