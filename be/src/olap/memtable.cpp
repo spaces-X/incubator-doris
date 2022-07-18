@@ -170,15 +170,16 @@ void MemTable::insert(const vectorized::Block* input_block, const std::vector<in
     size_t input_size = target_block.allocated_bytes() * num_rows / target_block.rows();
     _mem_usage += input_size;
     _mem_tracker->consume(input_size);
-
-    for (int i = 0; i < num_rows; i++) {
-        _row_in_blocks.emplace_back(new RowInBlock {cursor_in_mutableblock + i});
-        _insert_one_row_from_block(_row_in_blocks.back());
+    if (_keys_type != KeysType::DUP_KEYS) {
+        for (int i = 0; i < num_rows; i++) {
+            _row_in_blocks.emplace_back(new RowInBlock {cursor_in_mutableblock + i});
+            _insert_one_row_from_block(_row_in_blocks.back());
+        }
     }
+    _rows += num_rows;
 }
 
 void MemTable::_insert_one_row_from_block(RowInBlock* row_in_block) {
-    _rows++;
     bool overwritten = false;
     if (_keys_type == KeysType::DUP_KEYS) {
         // TODO: dup keys only need sort opertaion. Rethink skiplist is the beat way to sort columns?
@@ -283,20 +284,42 @@ void MemTable::_aggregate_two_row_in_block(RowInBlock* new_row, RowInBlock* row_
                                  new_row->_row_pos, nullptr);
     }
 }
+
+void MemTable::_sort_block_by_rows() {
+    //pdq sort is not stable, so we need the incoming_index to ensure stable.
+    pdqsort(_index_for_sort.begin(), _index_for_sort.end(),
+            [this](const MemTable::OrderedIndexItem& left,
+                   const MemTable::OrderedIndexItem& right) {
+                int res = _input_mutable_block.compare_at(left.index_in_block, right.index_in_block,
+                                                          _schema->num_key_columns(),
+                                                          _input_mutable_block, -1);
+                if (res != 0) {
+                    return res < 0;
+                }
+                return left.incoming_index < right.incoming_index;
+            });
+}
+
 template <bool is_final>
 void MemTable::_collect_vskiplist_results() {
-    VecTable::Iterator it(_vec_skip_list.get());
-    vectorized::Block in_block = _input_mutable_block.to_block();
     if (_keys_type == KeysType::DUP_KEYS) {
-        std::vector<int> row_pos_vec;
-        DCHECK(in_block.rows() <= std::numeric_limits<int>::max());
-        row_pos_vec.reserve(in_block.rows());
-        for (it.SeekToFirst(); it.Valid(); it.Next()) {
-            row_pos_vec.emplace_back(it.key()->_row_pos);
+        _index_for_sort.clear();
+        _index_for_sort.resize(_input_mutable_block.rows());
+        for (uint32_t i = 0; i < _input_mutable_block.rows(); i++) {
+            _index_for_sort[i] = {i, i};
         }
-        _output_mutable_block.add_rows(&in_block, row_pos_vec.data(),
-                                       row_pos_vec.data() + in_block.rows());
+        _sort_block_by_rows();
+        std::vector<int> ordered_rows(_index_for_sort.size());
+        for (size_t i = 0; i < _index_for_sort.size(); i++) {
+            ordered_rows.push_back(_index_for_sort[0].index_in_block);
+        }
+        vectorized::Block in_block = _input_mutable_block.to_block();
+        _output_mutable_block.add_rows(&in_block, ordered_rows.data(),
+                                       ordered_rows.data() + in_block.rows());
+
     } else {
+        VecTable::Iterator it(_vec_skip_list.get());
+        vectorized::Block in_block = _input_mutable_block.to_block();
         size_t idx = 0;
         for (it.SeekToFirst(); it.Valid(); it.Next()) {
             auto& block_data = in_block.get_columns_with_type_and_name();

@@ -23,6 +23,7 @@
 #include "olap/olap_define.h"
 #include "olap/skiplist.h"
 #include "runtime/mem_tracker.h"
+#include "util/pdqsort.h"
 #include "util/tuple_row_zorder_compare.h"
 #include "vec/aggregate_functions/aggregate_function.h"
 #include "vec/common/string_ref.h"
@@ -140,6 +141,7 @@ private:
     // for vectorized
     void _insert_one_row_from_block(RowInBlock* row_in_block);
     void _aggregate_two_row_in_block(RowInBlock* new_row, RowInBlock* row_in_skiplist);
+    void _sort_block_by_rows();
 
     int64_t _tablet_id;
     Schema* _schema;
@@ -192,6 +194,12 @@ private:
     //for vectorized
     vectorized::MutableBlock _input_mutable_block;
     vectorized::MutableBlock _output_mutable_block;
+    struct OrderedIndexItem {
+        uint32_t index_in_block;
+        uint32_t incoming_index; // used for sort by column
+    };
+    using OrderedIndex = std::vector<OrderedIndexItem>;
+    OrderedIndex _index_for_sort;
 
     template <bool is_final>
     void _collect_vskiplist_results();
