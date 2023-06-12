@@ -137,6 +137,7 @@ public:
 
     void set_writer_path(const std::string& path) { _rowset_writer->set_writer_path(path); }
     RowsetSharedPtr get_cur_rowset() { return _cur_rowset; }
+    RuntimeProfile* runtime_profile() const { return _profile; }
 
 private:
     DeltaWriter(WriteRequest* req, StorageEngine* storage_engine, RuntimeProfile* profile,

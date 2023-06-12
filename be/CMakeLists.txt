@@ -21,6 +21,11 @@ project(doris CXX C)
 
 # Write compile_commands.json
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# use -fPIC
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+
 # set platforms
 
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64")
@@ -435,7 +440,7 @@ SET(ZSTD_HOME "$ENV{DORIS_THIRDPARTY}/installed")
 SET(ZSTD_INCLUDE_DIR "$ENV{DORIS_THIRDPARTY}/installed/include/zstd")
 
 add_subdirectory(${SRC_DIR}/apache-orc EXCLUDE_FROM_ALL)
-target_compile_options(orc PRIVATE -Wno-implicit-fallthrough -w)
+target_compile_options(orc PRIVATE -Wno-implicit-fallthrough -w -fPIC)
 
 set(BUILD_STATIC_LIBRARIES ON)
 set(BUILD_SHARED_LIBRARIES OFF)
@@ -454,7 +459,7 @@ endif()
 
 add_subdirectory(${SRC_DIR}/clucene EXCLUDE_FROM_ALL)
 
-set(clucene_options -w -Wall -Wno-non-virtual-dtor)
+set(clucene_options -w -Wall -Wno-non-virtual-dtor -fPIC)
 if (COMPILER_CLANG)
     set(clucene_options ${clucene_options} -Wno-c++11-narrowing)
 else ()
@@ -524,9 +529,9 @@ if (COMPILER_GCC)
 endif ()
 
 if (COMPILER_CLANG)
-    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "16")
-        message(FATAL_ERROR "Need Clang version at least 16")
-    endif()
+#    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "16")
+#        message(FATAL_ERROR "Need Clang version at least 16")
+#    endif()
 
     add_compile_options(-fcolor-diagnostics 
                         -Wpedantic
@@ -616,7 +621,7 @@ endif()
 # For CMAKE_BUILD_TYPE=Release
 #   -O3: Enable all compiler optimizations
 #   -DNDEBUG: Turn off dchecks/asserts/debug only code.
-set(CXX_FLAGS_RELEASE "${CXX_GCC_FLAGS} -O3 -DNDEBUG")
+set(CXX_FLAGS_RELEASE "${CXX_GCC_FLAGS} -O0 -g -DNDEBUG")
 set(CXX_FLAGS_ASAN "${CXX_GCC_FLAGS} -O0 -fsanitize=address -DADDRESS_SANITIZER")
 set(CXX_FLAGS_LSAN "${CXX_GCC_FLAGS} -O0 -fsanitize=leak -DLEAK_SANITIZER")
 
@@ -755,9 +760,11 @@ set(COMMON_THIRDPARTY
     backtrace
     rocksdb
     cyrus-sasl
+    -Wl,--whole-archive
     libs2
+    -Wl,--no-whole-archive
     snappy
-    Boost::date_time
+    ${Boost_LIBRARIES}
     thrift
     thriftnb
     glog
@@ -844,7 +851,7 @@ endif()
 if (OS_MACOSX)
     set(COMMON_THIRDPARTY
         ${COMMON_THIRDPARTY}
-        Boost::container
+        ${Boost_LIBRARIES}
         bfd
         iberty
         intl

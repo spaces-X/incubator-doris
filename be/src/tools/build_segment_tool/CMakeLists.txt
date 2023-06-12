@@ -25,9 +25,23 @@ add_executable(segment_builder
     segment_builder.cpp
     build_helper.cpp
     builder_scanner_memtable.cpp
+    JNI/segment_builder_jni.cpp
+)
+
+add_library(segment_builder_tool SHARED
+    segment_builder.cpp
+    build_helper.cpp
+    builder_scanner_memtable.cpp
+    JNI/segment_builder_jni.cpp
 )
 
 # pch_reuse(build_segment_tool)
+
+set_target_properties(segment_builder_tool PROPERTIES ENABLE_EXPORTS 1)
+target_link_libraries(segment_builder_tool
+        ${DORIS_LINK_LIBS}
+        )
+target_link_options(segment_builder_tool PRIVATE -Wl,--trace-symbol=_ZTV5S2Cap)
 
 # This permits libraries loaded by dlopen to link to the symbols in the program.
 set_target_properties(segment_builder PROPERTIES ENABLE_EXPORTS 1)
@@ -38,6 +52,7 @@ target_link_libraries(segment_builder
 
 install(DIRECTORY DESTINATION ${OUTPUT_DIR}/lib/)
 install(TARGETS segment_builder DESTINATION ${OUTPUT_DIR}/lib/)
+install(TARGETS segment_builder_tool DESTINATION ${OUTPUT_DIR}/lib/)
 
 if (NOT OS_MACOSX)
 # Meta tool never need debug info
