@@ -27,6 +27,12 @@ add_executable(segment_builder
     builder_scanner_memtable.cpp
 )
 
+add_library(segment_builder_tool SHARED
+    segment_builder.cpp
+    build_helper.cpp
+    builder_scanner_memtable.cpp
+)
+
 # pch_reuse(build_segment_tool)
 
 # This permits libraries loaded by dlopen to link to the symbols in the program.
@@ -38,6 +44,7 @@ target_link_libraries(segment_builder
 
 install(DIRECTORY DESTINATION ${OUTPUT_DIR}/lib/)
 install(TARGETS segment_builder DESTINATION ${OUTPUT_DIR}/lib/)
+install(TARGETS segment_builder_tool DESTINATION ${OUTPUT_DIR}/lib/)
 
 if (NOT OS_MACOSX)
 # Meta tool never need debug info

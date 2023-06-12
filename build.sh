@@ -634,6 +634,7 @@ EOF
 
     if [[ "${BUILD_SEGMENT_TOOL}" = "ON" ]]; then
         cp -r -p "${DORIS_HOME}/be/output/lib/segment_builder" "${DORIS_OUTPUT}/be/lib"/
+        cp -r -p "${DORIS_HOME}/be/output/lib/libsegment_builder_tool.so" "${DORIS_OUTPUT}/be/lib"/
     fi
 
     cp -r -p "${DORIS_HOME}/be/output/udf"/*.a "${DORIS_OUTPUT}/udf/lib"/

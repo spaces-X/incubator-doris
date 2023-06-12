@@ -524,9 +524,9 @@ if (COMPILER_GCC)
 endif ()
 
 if (COMPILER_CLANG)
-    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "16")
-        message(FATAL_ERROR "Need Clang version at least 16")
-    endif()
+#    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "16")
+#        message(FATAL_ERROR "Need Clang version at least 16")
+#    endif()
 
     add_compile_options(-fcolor-diagnostics 
                         -Wpedantic
@@ -757,7 +757,7 @@ set(COMMON_THIRDPARTY
     cyrus-sasl
     libs2
     snappy
-    Boost::date_time
+    ${Boost_LIBRARIES}
     thrift
     thriftnb
     glog
@@ -844,7 +844,7 @@ endif()
 if (OS_MACOSX)
     set(COMMON_THIRDPARTY
         ${COMMON_THIRDPARTY}
-        Boost::container
+        ${Boost_LIBRARIES}
         bfd
         iberty
         intl
