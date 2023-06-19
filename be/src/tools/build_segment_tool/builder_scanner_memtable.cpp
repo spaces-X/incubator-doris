@@ -50,10 +50,11 @@ void BuilderScannerMemtable::init() {
     uid.hi = 1;
     uid.lo = 1;
     _query_ctx->query_id = uid;
-    int64_t bytes_limit = MemInfo::mem_limit();
-    _query_ctx->query_mem_tracker = std::make_shared<MemTrackerLimiter>(
-            MemTrackerLimiter::Type::LOAD,
-            fmt::format("Load#Id={}", print_id(_query_ctx->query_id)), bytes_limit);
+//    int64_t bytes_limit = MemInfo::mem_limit();
+    _query_ctx->query_mem_tracker = nullptr;
+//    _query_ctx->query_mem_tracker = std::make_shared<MemTrackerLimiter>(
+//            MemTrackerLimiter::Type::LOAD,
+//            fmt::format("Load#Id={}", print_id(_query_ctx->query_id)), bytes_limit);
     // _query_ctx->query_mem_tracker->enable_print_log_usage();
     create_expr_info();
     init_desc_table();
