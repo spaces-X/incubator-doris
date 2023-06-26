@@ -468,6 +468,11 @@ void BuilderScannerMemtable::doSegmentBuild(
         scan_node.runtime_profile()->pretty_print(&ss);
         LOG(INFO) << ss.str();
     }
+    {
+        std::stringstream ss;
+        delta_writer->runtime_profile()->pretty_print(&ss);
+        LOG(INFO) << ss.str();
+    }
 }
 
 } // namespace doris
