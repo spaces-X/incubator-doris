@@ -25,12 +25,14 @@ add_executable(segment_builder
     segment_builder.cpp
     build_helper.cpp
     builder_scanner_memtable.cpp
+    JNI/segment_builder_jni.cpp
 )
 
 add_library(segment_builder_tool SHARED
     segment_builder.cpp
     build_helper.cpp
     builder_scanner_memtable.cpp
+    JNI/segment_builder_jni.cpp
 )
 
 # pch_reuse(build_segment_tool)
