@@ -913,7 +913,7 @@ DEFINE_String(be_node_role, "mix");
 // Hide the be config page for webserver.
 DEFINE_Bool(hide_webserver_config_page, "false");
 
-DEFINE_Bool(enable_segcompaction, "true");
+DEFINE_Bool(enable_segcompaction, "false");
 
 // Trigger segcompaction if the num of segments in a rowset exceeds this threshold.
 DEFINE_Int32(segcompaction_threshold_segment_num, "10");
