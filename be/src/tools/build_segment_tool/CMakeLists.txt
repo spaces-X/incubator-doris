@@ -44,6 +44,10 @@ target_link_libraries(segment_builder
     ${DORIS_LINK_LIBS}
 )
 
+set_target_properties(segment_builder_tool PROPERTIES ENABLE_EXPORTS 1)
+target_link_libraries(segment_builder_tool
+        ${DORIS_LINK_LIBS}
+)
 install(DIRECTORY DESTINATION ${OUTPUT_DIR}/lib/)
 install(TARGETS segment_builder DESTINATION ${OUTPUT_DIR}/lib/)
 install(TARGETS segment_builder_tool DESTINATION ${OUTPUT_DIR}/lib/)
