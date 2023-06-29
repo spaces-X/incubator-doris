@@ -440,7 +440,7 @@ SET(ZSTD_HOME "$ENV{DORIS_THIRDPARTY}/installed")
 SET(ZSTD_INCLUDE_DIR "$ENV{DORIS_THIRDPARTY}/installed/include/zstd")
 
 add_subdirectory(${SRC_DIR}/apache-orc EXCLUDE_FROM_ALL)
-target_compile_options(orc PRIVATE -Wno-implicit-fallthrough -w)
+target_compile_options(orc PRIVATE -Wno-implicit-fallthrough -w -fPIC)
 
 set(BUILD_STATIC_LIBRARIES ON)
 set(BUILD_SHARED_LIBRARIES OFF)
@@ -459,7 +459,7 @@ endif()
 
 add_subdirectory(${SRC_DIR}/clucene EXCLUDE_FROM_ALL)
 
-set(clucene_options -w -Wall -Wno-non-virtual-dtor)
+set(clucene_options -w -Wall -Wno-non-virtual-dtor -fPIC)
 if (COMPILER_CLANG)
     set(clucene_options ${clucene_options} -Wno-c++11-narrowing)
 else ()

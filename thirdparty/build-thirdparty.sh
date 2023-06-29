@@ -318,7 +318,7 @@ build_libbacktrace() {
     cd "${TP_SOURCE_DIR}/${LIBBACKTRACE_SOURCE}"
 
     CPPFLAGS="-I${TP_INCLUDE_DIR}" \
-        CXXFLAGS="-I${TP_INCLUDE_DIR}" \
+        CXXFLAGS="-fPIC -I${TP_INCLUDE_DIR}" \
         LDFLAGS="-L${TP_LIB_DIR}" \
         ./configure --prefix="${TP_INSTALL_DIR}"
 
@@ -334,7 +334,7 @@ build_libevent() {
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
 
-    CFLAGS="-std=c99 -D_BSD_SOURCE -fno-omit-frame-pointer -g -ggdb -O2 -I${TP_INCLUDE_DIR}" \
+    CFLAGS="-fPIC  -std=c99 -D_BSD_SOURCE -fno-omit-frame-pointer -g -ggdb -O2 -I${TP_INCLUDE_DIR}" \
         CPPLAGS="-I${TP_INCLUDE_DIR}" \
         LDFLAGS="-L${TP_LIB_DIR}" \
         "${CMAKE_CMD}" -G "${GENERATOR}" -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" -DEVENT__DISABLE_TESTS=ON \
@@ -360,7 +360,7 @@ build_openssl() {
     cd "${TP_SOURCE_DIR}/${OPENSSL_SOURCE}"
 
     CPPFLAGS="-I${TP_INCLUDE_DIR}" \
-        CXXFLAGS="-I${TP_INCLUDE_DIR}" \
+        CXXFLAGS="-fPIC -I${TP_INCLUDE_DIR}" \
         LDFLAGS="-L${TP_LIB_DIR}" \
         LIBDIR="lib" \
         ./Configure --prefix="${TP_INSTALL_DIR}" --with-rand-seed=devrandom -shared "${OPENSSL_PLATFORM}"
@@ -386,11 +386,11 @@ build_thrift() {
 
     if [[ "${KERNEL}" != 'Darwin' ]]; then
         cflags="-I${TP_INCLUDE_DIR}"
-        cxxflags="-I${TP_INCLUDE_DIR} ${warning_unused_but_set_variable} -Wno-inconsistent-missing-override"
+        cxxflags="-fPIC -I${TP_INCLUDE_DIR} ${warning_unused_but_set_variable} -Wno-inconsistent-missing-override"
         ldflags="-L${TP_LIB_DIR} --static"
     else
         cflags="-I${TP_INCLUDE_DIR} -Wno-implicit-function-declaration -Wno-inconsistent-missing-override"
-        cxxflags="-I${TP_INCLUDE_DIR} ${warning_unused_but_set_variable} -Wno-inconsistent-missing-override"
+        cxxflags="-fPIC -I${TP_INCLUDE_DIR} ${warning_unused_but_set_variable} -Wno-inconsistent-missing-override"
         ldflags="-L${TP_LIB_DIR}"
     fi
 
@@ -523,7 +523,7 @@ build_rapidjson() {
     rm -rf CMakeCache.txt CMakeFiles/
 
     "${CMAKE_CMD}" ../ -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" -DRAPIDJSON_BUILD_DOC=OFF \
-        -DRAPIDJSON_BUILD_EXAMPLES=OFF -DRAPIDJSON_BUILD_TESTS=OFF
+        -DRAPIDJSON_BUILD_EXAMPLES=OFF -DRAPIDJSON_BUILD_TESTS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 
     make -j "${PARALLEL}"
     make install
@@ -579,7 +579,7 @@ build_zlib() {
     cd "${TP_SOURCE_DIR}/${ZLIB_SOURCE}"
 
     CFLAGS="-O3 -fPIC" \
-        CPPFLAGS="-I${TP_INCLUDE_DIR}" \
+        CPPFLAGS="-fPIC -I${TP_INCLUDE_DIR}" \
         LDFLAGS="-L${TP_LIB_DIR}" \
         ./configure --prefix="${TP_INSTALL_DIR}" --static
 
@@ -604,7 +604,8 @@ build_lz4() {
     for link in "${old_symbolic_links[@]}"; do
         rm -f "${TP_INSTALL_DIR}/bin/${link}"
     done
-
+     CFLAGS=" -fPIC" \
+            CPPFLAGS="-fPIC" \
     make -j "${PARALLEL}" install PREFIX="${TP_INSTALL_DIR}" BUILD_SHARED=no INCLUDEDIR="${TP_INCLUDE_DIR}/lz4"
 }
 
@@ -616,7 +617,7 @@ build_zstd() {
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
 
-    "${CMAKE_CMD}" -G "${GENERATOR}" -DBUILD_TESTING=OFF -DZSTD_BUILD_TESTS=OFF -DZSTD_BUILD_STATIC=ON \
+    "${CMAKE_CMD}" -G "${GENERATOR}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_TESTING=OFF -DZSTD_BUILD_TESTS=OFF -DZSTD_BUILD_STATIC=ON \
         -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_SHARED=OFF -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" ..
 
     "${BUILD_SYSTEM}" -j "${PARALLEL}" install
@@ -627,7 +628,8 @@ build_zstd() {
 build_bzip() {
     check_if_source_exist "${BZIP_SOURCE}"
     cd "${TP_SOURCE_DIR}/${BZIP_SOURCE}"
-
+     CFLAGS=" -fPIC" \
+                CPPFLAGS="-fPIC" \
     make -j "${PARALLEL}" install PREFIX="${TP_INSTALL_DIR}"
 }
 
@@ -638,7 +640,7 @@ build_lzo2() {
 
     CPPFLAGS="-I${TP_INCLUDE_DIR}" \
         LDFLAGS="-L${TP_LIB_DIR}" \
-        ./configure --prefix="${TP_INSTALL_DIR}" --disable-shared --enable-static
+        ./configure --prefix="${TP_INSTALL_DIR}" --disable-shared --enable-static --with-pic
 
     make -j "${PARALLEL}"
     make install
@@ -661,7 +663,7 @@ build_curl() {
         PKG_CONFIG="pkg-config --static" \
         ./configure --prefix="${TP_INSTALL_DIR}" --disable-shared --enable-static \
         --without-librtmp --with-ssl="${TP_INSTALL_DIR}" --without-libidn2 --disable-ldap --enable-ipv6 \
-        --without-libssh2 --without-brotli
+        --without-libssh2 --without-brotli --with-pic
 
     make curl_LDFLAGS=-all-static -j "${PARALLEL}"
     make curl_LDFLAGS=-all-static install
@@ -689,7 +691,7 @@ build_hyperscan() {
         cxxflags=''
     fi
 
-    CXXFLAGS="${cxxflags}" \
+    CXXFLAGS="${cxxflags} -fPIC" \
         ./configure --prefix="${TP_INSTALL_DIR}"
     make install
 
@@ -702,7 +704,7 @@ build_hyperscan() {
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
 
-    CXXFLAGS="-D_HAS_AUTO_PTR_ETC=0" \
+    CXXFLAGS="-D_HAS_AUTO_PTR_ETC=0 -fPIC" \
         "${CMAKE_CMD}" -G "${GENERATOR}" -DBUILD_SHARED_LIBS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DBOOST_ROOT="${TP_INSTALL_DIR}" -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" -DBUILD_EXAMPLES=OFF ..
     "${BUILD_SYSTEM}" -j "${PARALLEL}" install
@@ -720,12 +722,12 @@ build_boost() {
         cxxflags=''
     fi
 
-    CXXFLAGS="${cxxflags}" \
+    CXXFLAGS="${cxxflags} -fPIC" \
         ./bootstrap.sh --prefix="${TP_INSTALL_DIR}" --with-toolset="${boost_toolset}"
     # -q: Fail at first error
     ./b2 -q link=static runtime-link=static -j "${PARALLEL}" \
         --without-mpi --without-graph --without-graph_parallel --without-python \
-        cxxflags="-std=c++17 -g -I${TP_INCLUDE_DIR} -L${TP_LIB_DIR}" install
+        cxxflags="-std=c++17 -g -fPIC -I${TP_INCLUDE_DIR} -L${TP_LIB_DIR}" install
 }
 
 # mysql
@@ -752,7 +754,7 @@ build_mysql() {
         cxxflags='-pthread'
     fi
 
-    CFLAGS="${cflags}" CXXFLAGS="${cxxflags}" \
+    CFLAGS="${cflags} -fPIC" CXXFLAGS="${cxxflags} -fPIC" \
         "${CMAKE_CMD}" -G "${GENERATOR}" ../ -DCMAKE_LINK_SEARCH_END_STATIC=1 \
         -DWITH_BOOST="$(pwd)/${BOOST_SOURCE}" -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}/mysql" \
         -DWITHOUT_SERVER=1 -DWITH_ZLIB=1 -DZLIB_ROOT="${TP_INSTALL_DIR}" \
@@ -810,7 +812,7 @@ build_brpc() {
     # Currently, BRPC can't be built for static libraries only (without .so). Therefore, we should add `-fPIC`
     # to the dependencies which are required by BRPC. Dependencies: zlib, glog, protobuf, leveldb
     LDFLAGS="${ldflags}" \
-        "${CMAKE_CMD}" -G "${GENERATOR}" -DBUILD_SHARED_LIBS=1 -DWITH_GLOG=ON -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" \
+        "${CMAKE_CMD}" -G "${GENERATOR}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=1 -DWITH_GLOG=ON -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" \
         -DCMAKE_LIBRARY_PATH="${TP_INSTALL_DIR}/lib64" -DCMAKE_INCLUDE_PATH="${TP_INSTALL_DIR}/include" \
         -DBUILD_BRPC_TOOLS=OFF \
         -DPROTOBUF_PROTOC_EXECUTABLE="${TP_INSTALL_DIR}/bin/protoc" ..
@@ -879,7 +881,7 @@ build_librdkafka() {
     # As a result, we use a patch to hard code "--static" into PKG_CONFIG instead.
     # PKG_CONFIG="pkg-config --static"
 
-    CPPFLAGS="-I${TP_INCLUDE_DIR}" \
+    CPPFLAGS="-fPIC -I${TP_INCLUDE_DIR}" \
         LDFLAGS="-L${TP_LIB_DIR} -lssl -lcrypto -lzstd -lz -lsasl2 \
         -lgssapi_krb5 -lkrb5 -lkrb5support -lk5crypto -lcom_err -lresolv" \
         ./configure --prefix="${TP_INSTALL_DIR}" --enable-static --enable-sasl --disable-c11threads
@@ -898,7 +900,7 @@ build_libunixodbc() {
 
     cd "${TP_SOURCE_DIR}/${ODBC_SOURCE}"
 
-    CFLAGS="-I${TP_INCLUDE_DIR} -Wno-int-conversion -Wno-implicit-function-declaration" \
+    CFLAGS="-fPIC -I${TP_INCLUDE_DIR} -Wno-int-conversion -Wno-implicit-function-declaration" \
         LDFLAGS="-L${TP_LIB_DIR}" \
         ./configure --prefix="${TP_INSTALL_DIR}" --with-included-ltdl --enable-static=yes --enable-shared=no
 
@@ -926,6 +928,7 @@ build_flatbuffers() {
         "${CMAKE_CMD}" -G "${GENERATOR}" \
         -DFLATBUFFERS_CXX_FLAGS="${warning_class_memaccess} ${warning_unused_but_set_variable}" \
         -DFLATBUFFERS_BUILD_TESTS=OFF \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         ..
 
     "${BUILD_SYSTEM}" -j "${PARALLEL}"
@@ -962,7 +965,7 @@ build_arrow() {
     fi
 
     LDFLAGS="${ldflags}" \
-        "${CMAKE_CMD}" -G "${GENERATOR}" -DARROW_PARQUET=ON -DARROW_IPC=ON -DARROW_BUILD_SHARED=OFF \
+        "${CMAKE_CMD}" -G "${GENERATOR}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DARROW_PARQUET=ON -DARROW_IPC=ON -DARROW_BUILD_SHARED=OFF \
         -DARROW_BUILD_STATIC=ON -DARROW_WITH_BROTLI=ON -DARROW_WITH_LZ4=ON -DARROW_USE_GLOG=ON \
         -DARROW_WITH_SNAPPY=ON -DARROW_WITH_ZLIB=ON -DARROW_WITH_ZSTD=ON -DARROW_JSON=ON \
         -DARROW_WITH_UTF8PROC=OFF -DARROW_WITH_RE2=ON -DARROW_ORC=ON \
@@ -1011,6 +1014,7 @@ build_abseil() {
         -DBUILD_DEPS=ON \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DCMAKE_CXX_STANDARD=11
 
     cmake --build "${BUILD_DIR}" -j "${PARALLEL}"
@@ -1032,6 +1036,7 @@ build_s2() {
         -DCMAKE_PREFIX_PATH="${TP_INSTALL_DIR}" \
         -DBUILD_SHARED_LIBS=OFF \
         -DWITH_GFLAGS=ON \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_LIBRARY_PATH="${TP_INSTALL_DIR}" ..
 
@@ -1074,7 +1079,7 @@ build_bitshuffle() {
         fi
         tmp_obj="bitshuffle_${arch}_tmp.o"
         dst_obj="bitshuffle_${arch}.o"
-        "${CC}" ${EXTRA_CFLAGS:+${EXTRA_CFLAGS}} ${arch_flag:+${arch_flag}} -std=c99 "-I${PREFIX}/include/lz4" -O3 -DNDEBUG -c \
+        "${CC}" ${EXTRA_CFLAGS:+${EXTRA_CFLAGS}} ${arch_flag:+${arch_flag}} --fPIC -std=c99 "-I${PREFIX}/include/lz4" -O3 -DNDEBUG -c \
             "src/bitshuffle_core.c" \
             "src/bitshuffle.c" \
             "src/iochain.c"
@@ -1136,7 +1141,7 @@ build_croaringbitmap() {
 
     CXXFLAGS="-O3" \
         LDFLAGS="${ldflags}" \
-        "${CMAKE_CMD}" -G "${GENERATOR}" ${avx_flag:+${avx_flag}} -DROARING_BUILD_STATIC=ON -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" \
+        "${CMAKE_CMD}" -G "${GENERATOR}" ${avx_flag:+${avx_flag}} -DROARING_BUILD_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" \
         -DENABLE_ROARING_TESTS=OFF ..
 
     "${BUILD_SYSTEM}" -j "${PARALLEL}"
@@ -1153,7 +1158,7 @@ build_fmt() {
 
     rm -rf CMakeCache.txt CMakeFiles/
 
-    "${CMAKE_CMD}" -G "${GENERATOR}" -DBUILD_SHARED_LIBS=FALSE -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" ..
+    "${CMAKE_CMD}" -G "${GENERATOR}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=FALSE -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" ..
     "${BUILD_SYSTEM}" -j"${PARALLEL}"
     "${BUILD_SYSTEM}" install
 }
@@ -1191,6 +1196,7 @@ build_orc() {
 
     CXXFLAGS="-O3 -Wno-array-bounds ${warning_reserved_identifier} ${warning_suggest_override}" \
         "${CMAKE_CMD}" -G "${GENERATOR}" ../ -DBUILD_JAVA=OFF \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DPROTOBUF_HOME="${TP_INSTALL_DIR}" \
         -DSNAPPY_HOME="${TP_INSTALL_DIR}" \
         -DLZ4_HOME="${TP_INSTALL_DIR}" \
@@ -1218,7 +1224,7 @@ build_cctz() {
 
     rm -rf CMakeCache.txt CMakeFiles/
 
-    "${CMAKE_CMD}" -G "${GENERATOR}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" -DBUILD_TESTING=OFF ..
+    "${CMAKE_CMD}" -G "${GENERATOR}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_TESTING=OFF ..
     "${BUILD_SYSTEM}" -j "${PARALLEL}" install
 }
 
@@ -1257,7 +1263,7 @@ build_aws_sdk() {
 
     # -Wno-nonnull gcc-11
     "${CMAKE_CMD}" -G "${GENERATOR}" -B"${BUILD_DIR}" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" \
-        -DCMAKE_PREFIX_PATH="${TP_INSTALL_DIR}" -DBUILD_SHARED_LIBS=OFF -DENABLE_TESTING=OFF \
+        -DCMAKE_PREFIX_PATH="${TP_INSTALL_DIR}" -DBUILD_SHARED_LIBS=OFF -DENABLE_TESTING=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DCURL_LIBRARY_RELEASE="${TP_INSTALL_DIR}/lib/libcurl.a" -DZLIB_LIBRARY_RELEASE="${TP_INSTALL_DIR}/lib/libz.a" \
         -DBUILD_ONLY="core;s3;s3-crt;transfer" \
         -DCMAKE_CXX_FLAGS="-Wno-nonnull -Wno-deprecated-declarations ${warning_dangling_reference}" -DCPP_STANDARD=17
@@ -1378,7 +1384,7 @@ build_krb5() {
     fi
 
     CFLAGS="-fcommon -fPIC -I${TP_INSTALL_DIR}/include" LDFLAGS="-L${TP_INSTALL_DIR}/lib" \
-        ../configure --prefix="${TP_INSTALL_DIR}" --disable-shared --enable-static \
+        ../configure --prefix="${TP_INSTALL_DIR}" --disable-shared --enable-static --with-pic \
         --without-keyutils ${with_crypto_impl:+${with_crypto_impl}}
 
     make -j "${PARALLEL}"
@@ -1400,7 +1406,7 @@ build_hdfs3() {
         SSE_OPTION='-DENABLE_SSE=OFF'
     fi
     cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" \
-        -DBUILD_STATIC_LIBS=ON -DBUILD_SHARED_LIBS=OFF -DBUILD_TEST=OFF "${SSE_OPTION}" \
+        -DBUILD_STATIC_LIBS=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF -DBUILD_TEST=OFF "${SSE_OPTION}" \
         -DProtobuf_PROTOC_EXECUTABLE="${TP_INSTALL_DIR}/bin/protoc" \
         -DProtobuf_INCLUDE_DIR="${TP_INSTALL_DIR}/include" \
         -DProtobuf_LIBRARIES="${TP_INSTALL_DIR}/lib/libprotoc.a" \
@@ -1448,7 +1454,7 @@ build_benchmark() {
 
     # NOTE(amos): -DHAVE_STD_REGEX=1 avoid runtime checks as it will fail when compiling with non-standard toolchain
     CXXFLAGS="${cxxflags}" cmake -E chdir "build" \
-        cmake ../ -DBENCHMARK_ENABLE_GTEST_TESTS=OFF -DBENCHMARK_ENABLE_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -DHAVE_STD_REGEX=1
+        cmake ../ -DBENCHMARK_ENABLE_GTEST_TESTS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBENCHMARK_ENABLE_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -DHAVE_STD_REGEX=1
     cmake --build "build" --config Release
 
     mkdir -p "${TP_INCLUDE_DIR}/benchmark"
@@ -1465,7 +1471,7 @@ build_simdjson() {
     cd "${BUILD_DIR}"
 
     CXXFLAGS="-O3" CFLAGS="-O3" \
-        "${CMAKE_CMD}" -DSIMDJSON_EXCEPTIONS=OFF \
+        "${CMAKE_CMD}" -DSIMDJSON_EXCEPTIONS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DSIMDJSON_DEVELOPER_MODE=OFF -DSIMDJSON_BUILD_STATIC=ON \
         -DSIMDJSON_JUST_LIBRARY=ON -DSIMDJSON_ENABLE_THREADS=ON ..
     "${CMAKE_CMD}" --build . --config Release
@@ -1482,7 +1488,7 @@ build_nlohmann_json() {
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
 
-    "${CMAKE_CMD}" -G "${GENERATOR}" -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" -DCMAKE_PREFIX_PATH="${TP_INSTALL_DIR}" -DJSON_BuildTests=OFF ..
+    "${CMAKE_CMD}" -G "${GENERATOR}" -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" -DCMAKE_PREFIX_PATH="${TP_INSTALL_DIR}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DJSON_BuildTests=OFF ..
 
     "${BUILD_SYSTEM}" -j "${PARALLEL}"
     "${BUILD_SYSTEM}" install
@@ -1496,7 +1502,7 @@ build_opentelemetry() {
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
 
-    "${CMAKE_CMD}" -G "${GENERATOR}" -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" -DCMAKE_PREFIX_PATH="${TP_INSTALL_DIR}" -DBUILD_TESTING=OFF \
+    "${CMAKE_CMD}" -G "${GENERATOR}" -DCMAKE_INSTALL_PREFIX="${TP_INSTALL_DIR}" -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_PREFIX_PATH="${TP_INSTALL_DIR}" -DBUILD_TESTING=OFF \
         -DWITH_OTLP=ON -DWITH_OTLP_GRPC=OFF -DWITH_OTLP_HTTP=ON -DWITH_ZIPKIN=ON -DWITH_EXAMPLES=OFF ..
 
     "${BUILD_SYSTEM}" -j "${PARALLEL}"
@@ -1536,7 +1542,7 @@ build_binutils() {
     cd "${BUILD_DIR}"
 
     ../configure --prefix="${TP_INSTALL_DIR}/binutils" --includedir="${TP_INCLUDE_DIR}" --libdir="${TP_LIB_DIR}" \
-        --enable-install-libiberty --without-msgpack
+        --enable-install-libiberty --without-msgpack --with-pic
     make -j "${PARALLEL}"
     make install-bfd install-libiberty install-binutils
 }
@@ -1549,7 +1555,7 @@ build_gettext() {
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
 
-    ../gettext-runtime/configure --prefix="${TP_INSTALL_DIR}" --disable-java
+    ../gettext-runtime/configure --prefix="${TP_INSTALL_DIR}" --disable-java --with-pic
     cd intl
     make -j "${PARALLEL}"
     make install
