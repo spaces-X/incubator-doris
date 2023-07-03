@@ -1079,7 +1079,7 @@ build_bitshuffle() {
         fi
         tmp_obj="bitshuffle_${arch}_tmp.o"
         dst_obj="bitshuffle_${arch}.o"
-        "${CC}" ${EXTRA_CFLAGS:+${EXTRA_CFLAGS}} ${arch_flag:+${arch_flag}} --fPIC -std=c99 "-I${PREFIX}/include/lz4" -O3 -DNDEBUG -c \
+        "${CC}" ${EXTRA_CFLAGS:+${EXTRA_CFLAGS}} ${arch_flag:+${arch_flag}} -fPIC -std=c99 "-I${PREFIX}/include/lz4" -O3 -DNDEBUG -c \
             "src/bitshuffle_core.c" \
             "src/bitshuffle.c" \
             "src/iochain.c"
