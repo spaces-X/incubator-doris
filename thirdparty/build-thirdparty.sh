@@ -1431,7 +1431,7 @@ build_jemalloc() {
     cd "${BUILD_DIR}"
 
     cflags='-O3 -fno-omit-frame-pointer -fPIC -g'
-    CFLAGS="${cflags}" ../configure --prefix="${TP_INSTALL_DIR}" --with-jemalloc-prefix=je --enable-prof --disable-cxx --disable-libdl --disable-shared
+    CFLAGS="${cflags}" ../configure --prefix="${TP_INSTALL_DIR}" --with-jemalloc-prefix=je --enable-prof --disable-initial-exec-tls --disable-cxx --disable-libdl --disable-shared
 
     make -j "${PARALLEL}"
     make install
