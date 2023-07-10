@@ -760,7 +760,9 @@ set(COMMON_THIRDPARTY
     backtrace
     rocksdb
     cyrus-sasl
+    -Wl,--whole-archive
     libs2
+    -Wl,--no-whole-archive
     snappy
     ${Boost_LIBRARIES}
     thrift
