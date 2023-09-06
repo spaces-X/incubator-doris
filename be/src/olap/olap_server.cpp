@@ -216,6 +216,41 @@ Status StorageEngine::start_bg_threads() {
     return Status::OK();
 }
 
+Status StorageEngine::stop_bg_threads() {
+    if (_base_compaction_thread_pool) {
+        _base_compaction_thread_pool->shutdown();
+    }
+    if (_cumu_compaction_thread_pool) {
+        _cumu_compaction_thread_pool->shutdown();
+    }
+
+    if (_seg_compaction_thread_pool) {
+        _seg_compaction_thread_pool->shutdown();
+    }
+    if (_tablet_meta_checkpoint_thread_pool) {
+        _tablet_meta_checkpoint_thread_pool->shutdown();
+    }
+
+    if (_cold_data_compaction_thread_pool) {
+        _cold_data_compaction_thread_pool->shutdown();
+    }
+
+    if (_tablet_publish_txn_thread_pool) {
+        _tablet_publish_txn_thread_pool->shutdown();
+    }
+
+    if (_bg_multi_get_thread_pool) {
+        _bg_multi_get_thread_pool->shutdown();
+    }
+
+    if (_cooldown_thread_pool) {
+        _cooldown_thread_pool->shutdown();
+    }
+
+    return Status::OK();
+
+}
+
 void StorageEngine::_fd_cache_clean_callback() {
     int32_t interval = 600;
     while (!_stop_background_threads_latch.wait_for(std::chrono::seconds(interval))) {

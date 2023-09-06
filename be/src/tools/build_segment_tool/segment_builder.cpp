@@ -69,11 +69,20 @@ int main(int argc, char** argv, char** envp) {
     doris::BuildHelper* instance = doris::BuildHelper::init_instance();
     instance->initial_build_env();
     instance->open(FLAGS_meta_file, build_dir, FLAGS_data_path, FLAGS_format);
-    instance->build();
+    auto status = instance->build();
+    if (!status.ok()) {
+        LOG(FATAL) << "failed to build segment files, status:" << status;
+        std::exit(-1);
+    }
+    status = instance->close();
+    if (!status.ok()) {
+        LOG(FATAL) << "failed to closse BuildHelper instance, status:" << status;
+        std::exit(-1);
+    }
     auto t1 = std::chrono::steady_clock::now();
     std::chrono::duration<double, std::milli> d {t1 - t0};
-    LOG(INFO) << "total cost:" << d.count() << " ms";
     // std::exit(EXIT_SUCCESS);
     gflags::ShutDownCommandLineFlags();
+    LOG(INFO) << "total cost:" << d.count() << " ms";
     return 0;
 }

@@ -357,6 +357,16 @@ Status TabletMeta::create_from_file(const string& file_path) {
     return Status::OK();
 }
 
+Status TabletMeta::create_from_json(const std::string& json_rowset_meta) {
+    TabletMetaPB tablet_meta_pb;
+    bool ret = json2pb::JsonToProtoMessage(json_rowset_meta, &tablet_meta_pb);
+    if (!ret) {
+        return Status::InternalError("can not convert the input json to TabletMetaPB, jsonStr:{}", json_rowset_meta);
+    }
+    init_from_pb(tablet_meta_pb);
+    return Status::OK();
+}
+
 std::string TabletMeta::construct_header_file_path(const string& schema_hash_path,
                                                    int64_t tablet_id) {
     std::stringstream header_name_stream;

@@ -14,6 +14,7 @@ public:
     void open(const std::string& meta_file, const std::string& build_dir,
               const std::string& data_path, const std::string& file_type);
     Status build();
+    Status close();
 
 private:
     static BuildHelper* _s_instance;

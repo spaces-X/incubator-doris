@@ -114,6 +114,7 @@ public:
     // Function create_from_file is used to be compatible with previous tablet_meta.
     // Previous tablet_meta is a physical file in tablet dir, which is not stored in rocksdb.
     Status create_from_file(const std::string& file_path);
+    Status create_from_json(const std::string& json_str);
     Status save(const std::string& file_path);
     Status save_as_json(const string& file_path, DataDir* dir);
     static Status save(const std::string& file_path, const TabletMetaPB& tablet_meta_pb);

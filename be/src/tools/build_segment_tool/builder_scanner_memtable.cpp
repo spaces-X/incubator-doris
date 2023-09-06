@@ -99,7 +99,9 @@ TPrimitiveType::type BuilderScannerMemtable::getPrimitiveType(FieldType t) {
     case FieldType::OLAP_FIELD_TYPE_DATETIMEV2: {
         return TPrimitiveType::DATETIMEV2;
     }
-    case FieldType::OLAP_FIELD_TYPE_DECIMAL:
+    case FieldType::OLAP_FIELD_TYPE_DECIMAL: {
+        return TPrimitiveType::DECIMALV2;
+    }
     case FieldType::OLAP_FIELD_TYPE_DECIMAL32: {
         return TPrimitiveType::DECIMAL32;
     }
@@ -260,47 +262,242 @@ void BuilderScannerMemtable::create_expr_info() {
             node.__set_type(TTypeNodeType::SCALAR);
             TScalarType scalar_type;
             scalar_type.__set_type(getPrimitiveType(col.type()));
-            if (getPrimitiveType(col.type()) == TPrimitiveType::VARCHAR) {
+            TPrimitiveType::type col_type = getPrimitiveType(col.type());
+            if (col_type == TPrimitiveType::VARCHAR || col_type == TPrimitiveType::HLL
+                || col_type == TPrimitiveType::CHAR || col_type == TPrimitiveType::STRING) {
                 scalar_type.__set_len(col.length());
+            } else if (col_type == TPrimitiveType::DECIMALV2 || col_type == TPrimitiveType::DECIMAL32 ||
+                       col_type == TPrimitiveType::DECIMAL64 || col_type == TPrimitiveType::DECIMAL128I) {
+                scalar_type.__set_precision(col.precision());
+                scalar_type.__set_scale(col.frac());
             }
             node.__set_scalar_type(scalar_type);
             type.types.emplace_back(node);
         }
         // expr_of_dest_slot
         {
-            TExprNode slot_ref;
-            slot_ref.node_type = TExprNodeType::SLOT_REF;
-            slot_ref.type = type;
-            slot_ref.num_children = 0;
-            slot_ref.slot_ref.slot_id = _tablet->num_columns() + i;
-            slot_ref.slot_ref.tuple_id = 1;
-            slot_ref.__isset.slot_ref = true;
 
             TExpr expr;
-            expr.nodes.push_back(slot_ref);
+            TPrimitiveType::type col_ptype = getPrimitiveType(col.type());
+            if (col_ptype == TPrimitiveType::OBJECT || col_ptype == TPrimitiveType::HLL) {
+//                do not need cast because  type is same
+//                TExprNode cast_expr;
+//                cast_expr.type = type;
+//                cast_expr.num_children = 1;
+//                // cast function info
+//                TFunction tfunction;
+//                TFunctionName fun_name;
+//                fun_name.db_name = ; // todo: what?
+//                fun_name.function_name = "castTo" + to_upper(to_string(getPrimitiveType(col.type()))); // todo: can we use to_string for enum PrimitiveType
+//                tfunction.name = fun_name;
+//                tfunction.arg_types
+//                //TODO: core info about
+//                cast_expr.vararg_start_idx = 0;
+//                cast_expr.fn = tfunction;
+//                // end for cast function info
+//                cast_expr.node_type = TExprNodeType::CAST_EXPR;
+//                cast_expr.opcode = TExprOpcode::CAST;
+//                // TODO:cast_expr.output_column = ?;
+//                expr.nodes.push_back(std::move(cast_expr));
+                {
+                    TExprNode transfer_expr;
+                    transfer_expr.__set_type(type);
+                    transfer_expr.__set_num_children(1);
+
+                    TFunction transfer_func;
+                    TScalarFunction trans_scalar_func;
+                    TFunctionName fn_name;
+                    if (col_ptype == TPrimitiveType::OBJECT) {
+                        fn_name.__set_function_name("to_bitmap");
+                        transfer_func.__set_signature("to_bitmap(TEXT)"); // TODO get the sig string
+                        trans_scalar_func.__set_symbol("_ZN5doris15BitmapFunctions9to_bitmapEPN9doris_udf15FunctionContextERKNS1_9StringValE");
+
+                    } else if (col_ptype == TPrimitiveType::HLL) {
+                        fn_name.__set_function_name("hll_hash");
+                        transfer_func.__set_signature("hll_hash(TEXT)"); // TODO get the sig string
+                        trans_scalar_func.__set_symbol("_ZN5doris12HllFunctions8hll_hashEPN9doris_udf15FunctionContextERKNS1_9StringValE");
+                    }
+
+                    transfer_func.__set_name(fn_name);
+                    transfer_func.__set_scalar_fn(trans_scalar_func);
+                    transfer_func.__set_binary_type(TFunctionBinaryType::type::BUILTIN);
+                    // args: list<string type>
+                    {
+                        std::vector<TTypeDesc> argTypes;
+                        TTypeDesc argType;
+                        TTypeNode node;
+                        node.__set_type(TTypeNodeType::SCALAR);
+                        TScalarType scalar_type;
+                        scalar_type.__set_type(TPrimitiveType::STRING);
+                        scalar_type.__set_len(0x7fffffff - 4);
+                        node.__set_scalar_type(scalar_type);
+                        argType.types.emplace_back(node);
+                        argTypes.emplace_back(argType);
+                        transfer_func.__set_arg_types(argTypes);
+                    }
+                    transfer_func.__set_ret_type(type); // todo check here
+                    transfer_func.__set_has_var_args(false);
+                    transfer_func.__set_id(0);
+                    // built-in-function do not have checksum
+                    transfer_func.__set_vectorized(true);
+                    transfer_expr.__set_fn(transfer_func);
+                    transfer_expr.__set_is_nullable(false);
+                    transfer_expr.__set_output_scale(-1);
+                    transfer_expr.__set_node_type(TExprNodeType::FUNCTION_CALL);
+                    expr.nodes.push_back(transfer_expr);
+                }
+
+                {
+                    TExprNode input_slot_ref;
+                    input_slot_ref.__set_node_type(TExprNodeType::SLOT_REF);
+                    input_slot_ref.__set_num_children(0);
+                    {
+                        TTypeDesc input_col_type;
+                        TTypeNode node;
+                        node.__set_type(TTypeNodeType::SCALAR);
+                        TScalarType scalar_type;
+                        scalar_type.__set_type(TPrimitiveType::STRING);
+                        scalar_type.__set_len(0x7fffffff - 4);
+                        node.__set_scalar_type(scalar_type);
+                        input_col_type.types.emplace_back(node);
+                        input_slot_ref.__set_type(type);
+                    }
+                    input_slot_ref.slot_ref.slot_id = _tablet->num_columns() + i; //TODO:check here
+                    input_slot_ref.slot_ref.tuple_id = 1; // TODO: check here
+                    input_slot_ref.__isset.slot_ref = true;
+                    input_slot_ref.__set_is_nullable(false);
+                    expr.nodes.push_back(input_slot_ref);
+                }
+
+
+
+            } else {
+                TExprNode slot_ref;
+                slot_ref.node_type = TExprNodeType::SLOT_REF;
+                slot_ref.type = type;
+                slot_ref.num_children = 0;
+                slot_ref.slot_ref.slot_id = _tablet->num_columns() + i;
+                slot_ref.slot_ref.tuple_id = 1;
+                slot_ref.__isset.slot_ref = true;
+                expr.nodes.push_back(slot_ref);
+            }
             _params.expr_of_dest_slot.emplace(i, expr);
         }
 
         // default_value_of_src_slot
         {
-            TExprNode node;
-            if (col.has_default_value()) {
-                node.node_type = TExprNodeType::STRING_LITERAL;
-                node.string_literal = TStringLiteral();
-                node.string_literal.__set_value(col.default_value());
-                node.__isset.string_literal = true;
-
-            } else {
-                if (col.is_nullable()) {
-                    node.node_type = TExprNodeType::NULL_LITERAL;
-                } else {
-                    continue;
-                }
-            }
-            node.type = type;
-            node.num_children = 0;
             TExpr expr;
-            expr.nodes.push_back(node);
+            TPrimitiveType::type col_ptype = getPrimitiveType(col.type());
+            if (col_ptype == TPrimitiveType::OBJECT || col_ptype == TPrimitiveType::HLL) {
+                //                do not need cast because  type is same
+                //                TExprNode cast_expr;
+                //                cast_expr.type = type;
+                //                cast_expr.num_children = 1;
+                //                // cast function info
+                //                TFunction tfunction;
+                //                TFunctionName fun_name;
+                //                fun_name.db_name = ; // todo: what?
+                //                fun_name.function_name = "castTo" + to_upper(to_string(getPrimitiveType(col.type()))); // todo: can we use to_string for enum PrimitiveType
+                //                tfunction.name = fun_name;
+                //                tfunction.arg_types
+                //                //TODO: core info about
+                //                cast_expr.vararg_start_idx = 0;
+                //                cast_expr.fn = tfunction;
+                //                // end for cast function info
+                //                cast_expr.node_type = TExprNodeType::CAST_EXPR;
+                //                cast_expr.opcode = TExprOpcode::CAST;
+                //                // TODO:cast_expr.output_column = ?;
+                //                expr.nodes.push_back(std::move(cast_expr));
+                {
+                    TExprNode transfer_expr;
+                    transfer_expr.__set_type(type);
+                    transfer_expr.__set_num_children(1);
+
+                    TFunction transfer_func;
+                    TScalarFunction trans_scalar_func;
+                    TFunctionName fn_name;
+                    if (col_ptype == TPrimitiveType::OBJECT) {
+                        fn_name.__set_function_name("to_bitmap");
+                        transfer_func.__set_signature("to_bitmap(TEXT)"); // TODO get the sig string
+                        trans_scalar_func.__set_symbol(
+                                "_ZN5doris15BitmapFunctions9to_bitmapEPN9doris_udf15FunctionContextERKNS1_9StringValE");
+
+                    } else if (col_ptype == TPrimitiveType::HLL) {
+                        fn_name.__set_function_name("hll_hash");
+                        transfer_func.__set_signature("hll_hash(TEXT)"); // TODO get the sig string
+                        trans_scalar_func.__set_symbol(
+                                "_ZN5doris12HllFunctions8hll_hashEPN9doris_udf15FunctionContextERKNS1_9StringValE");
+                    }
+
+                    transfer_func.__set_name(fn_name);
+                    transfer_func.__set_scalar_fn(trans_scalar_func);
+                    transfer_func.__set_binary_type(TFunctionBinaryType::type::BUILTIN);
+                    // args: list<string type>
+                    {
+                        std::vector<TTypeDesc> argTypes;
+                        TTypeDesc argType;
+                        TTypeNode node;
+                        node.__set_type(TTypeNodeType::SCALAR);
+                        TScalarType scalar_type;
+                        scalar_type.__set_type(TPrimitiveType::STRING);
+                        scalar_type.__set_len(0x7fffffff - 4);
+                        node.__set_scalar_type(scalar_type);
+                        argType.types.emplace_back(node);
+                        argTypes.emplace_back(argType);
+                        transfer_func.__set_arg_types(argTypes);
+                    }
+                    transfer_func.__set_ret_type(type); // todo check here
+                    transfer_func.__set_has_var_args(false);
+                    transfer_func.__set_id(0);
+                    // built-in-function do not have checksum
+                    transfer_func.__set_vectorized(true);
+                    transfer_expr.__set_fn(transfer_func);
+                    transfer_expr.__set_is_nullable(false);
+                    transfer_expr.__set_output_scale(-1);
+                    transfer_expr.__set_node_type(TExprNodeType::FUNCTION_CALL);
+                    expr.nodes.push_back(transfer_expr);
+                }
+
+                {
+                    TExprNode string_literal;
+                    string_literal.__set_node_type(TExprNodeType::STRING_LITERAL);
+                    string_literal.__set_num_children(0);
+                    {
+                        TTypeDesc string_literal_type;
+                        TTypeNode node;
+                        node.__set_type(TTypeNodeType::SCALAR);
+                        TScalarType scalar_type;
+                        scalar_type.__set_type(TPrimitiveType::STRING);
+                        scalar_type.__set_len(0x7fffffff - 4);
+                        node.__set_scalar_type(scalar_type);
+                        string_literal_type.types.emplace_back(node);
+                        string_literal.__set_type(string_literal_type);
+                    }
+                    string_literal.string_literal = TStringLiteral();
+                    string_literal.string_literal.__set_value("");
+                    string_literal.__isset.string_literal = true;
+                    string_literal.__set_is_nullable(false); // fix function build check
+                    expr.nodes.push_back(string_literal);
+                }
+            } else {
+                TExprNode node;
+                if (col.has_default_value()) {
+                    node.node_type = TExprNodeType::STRING_LITERAL;
+                    node.string_literal = TStringLiteral();
+                    node.string_literal.__set_value(col.default_value());
+                    node.__isset.string_literal = true;
+                } else {
+                    if (col.is_nullable()) {
+                        node.node_type = TExprNodeType::NULL_LITERAL;
+                    } else {
+                        continue;
+                    }
+                }
+                node.type = type;
+                node.num_children = 0;
+                expr.nodes.push_back(node);
+            }
+
             _params.default_value_of_src_slot.emplace(i + _tablet->num_columns(), expr);
         }
 

@@ -302,6 +302,7 @@ Status VFileScanner::_init_src_block(Block* block) {
     // and some of them are from file, such as k1 and k2, and some of them may not exist in file, such as tmp1
     // _input_tuple_desc also contains columns from path
     for (auto& slot : _input_tuple_desc->slots()) {
+
         DataTypePtr data_type;
         auto it = _name_to_col_type.find(slot->col_name());
         if (it == _name_to_col_type.end() || _is_dynamic_schema) {
@@ -349,6 +350,16 @@ Status VFileScanner::_cast_to_input_block(Block* block) {
         auto& arg = _src_block_ptr->get_by_name(slot_desc->col_name());
         // remove nullable here, let the get_function decide whether nullable
         auto return_type = slot_desc->get_data_type_ptr();
+        if (strcmp(remove_nullable(return_type)->get_family_name(), "BitMap") == 0 &&
+            strcmp(remove_nullable(arg.type)->get_family_name(),"String") == 0) {
+            if (arg.type->is_nullable()) {
+                auto nested = std::make_shared<vectorized::DataTypeString>();
+                return_type = std::make_shared<vectorized::DataTypeNullable>(nested);
+            } else {
+                return_type = std::make_shared<DataTypeString>();
+            }
+        }
+
         ColumnsWithTypeAndName arguments {
                 arg,
                 {DataTypeString().create_column_const(

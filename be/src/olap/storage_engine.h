@@ -168,6 +168,8 @@ public:
     // start all background threads. This should be call after env is ready.
     Status start_bg_threads();
 
+    Status stop_bg_threads();
+
     // clear trash and snapshot file
     // option: update disk usage after sweep
     Status start_trash_sweep(double* usage, bool ignore_guard = false);

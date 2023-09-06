@@ -1074,14 +1074,14 @@ public:
 
                     ret_status = ConvertImpl<LeftDataType, RightDataType, Name>::execute(
                             block, arguments, result, input_rows_count,
-                            context->check_overflow_for_decimal(), scale);
+                            context != nullptr ? context->check_overflow_for_decimal() : false, scale);
                 } else if constexpr (IsDataTypeDateTimeV2<RightDataType>) {
                     const ColumnWithTypeAndName& scale_column = block.get_by_position(result);
                     auto type =
                             check_and_get_data_type<DataTypeDateTimeV2>(scale_column.type.get());
                     ret_status = ConvertImpl<LeftDataType, RightDataType, Name>::execute(
                             block, arguments, result, input_rows_count,
-                            context->check_overflow_for_decimal(), type->get_scale());
+                            context != nullptr ? context->check_overflow_for_decimal() : false, type->get_scale());
                 } else {
                     ret_status = ConvertImpl<LeftDataType, RightDataType, Name>::execute(
                             block, arguments, result, input_rows_count);
@@ -1564,7 +1564,7 @@ private:
 
                         ConvertImpl<LeftDataType, RightDataType, NameCast>::execute(
                                 block, arguments, result, input_rows_count,
-                                context->check_overflow_for_decimal(), scale);
+                                context != nullptr ? context->check_overflow_for_decimal() : false, scale);
                         return true;
                     });
 

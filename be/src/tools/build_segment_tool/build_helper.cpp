@@ -48,6 +48,7 @@ void BuildHelper::initial_build_env() {
     // max buffer size used in memtable for the aggregated table
     config::write_buffer_size_for_agg = 8194304000;
     // CONF_mInt64(memtable_max_buffer_size, "8194304000");
+    config::enable_segcompaction = true;
 
     // std::shared_ptr<doris::MemTrackerLimiter> process_mem_tracker =
     //         std::make_shared<doris::MemTrackerLimiter>(MemTrackerLimiter::Type::GLOBAL,
@@ -99,18 +100,28 @@ void BuildHelper::open(const std::string& meta_file, const std::string& build_di
         exit(-1);
     }
     exec_env->set_storage_engine(engine);
+    EXIT_IF_ERROR(engine->start_bg_threads());
 }
 
 Status BuildHelper::build() {
     // load meta file
     io::FileReaderSPtr file_reader;
     TabletMeta* tablet_meta = new TabletMeta();
-    Status status = tablet_meta->create_from_file(_meta_file);
-    if (!status.ok()) {
-        std::cout << "load pb meta file:" << _meta_file << " failed"
-                  << ", status:" << status << std::endl;
-        return status;
+    if (_meta_file.ends_with(".json")) {
+        // json type: for initing meta from json file
+        std::string json_str;
+        std::filesystem::path meta_file_path(_meta_file);
+        RETURN_IF_ERROR(read_file_to_string(io::global_local_filesystem(), meta_file_path, &json_str));
+        RETURN_IF_ERROR(tablet_meta->create_from_json(json_str));
+    } else {
+        // default: for initing meta from PB
+        RETURN_IF_ERROR(tablet_meta->create_from_file(_meta_file));
     }
+//    if (!status.ok()) {
+//        std::cout << "load pb meta file:" << _meta_file << " failed"
+//                  << ", status:" << status << std::endl;
+//        return status;
+//    }
 
     LOG(INFO) << "table id:" << tablet_meta->table_id() << " tablet id:" << tablet_meta->tablet_id()
               << " shard id:" << tablet_meta->shard_id();
@@ -126,7 +137,7 @@ Status BuildHelper::build() {
     auto data_dir = StorageEngine::instance()->get_store(_build_dir);
     TabletMetaSharedPtr tablet_meta_ptr(tablet_meta);
     TabletSharedPtr new_tablet = doris::Tablet::create_tablet_from_meta(tablet_meta_ptr, data_dir);
-    status = StorageEngine::instance()->tablet_manager()->add_tablet_unlocked(
+    Status status = StorageEngine::instance()->tablet_manager()->add_tablet_unlocked(
             tablet_meta->tablet_id(), new_tablet, false, true);
 
     if (!status.ok()) {
@@ -146,15 +157,35 @@ Status BuildHelper::build() {
     BuilderScannerMemtable scanner(new_tablet, _build_dir, _file_type);
     scanner.doSegmentBuild(files);
 
-    std::string local_new_header =
-            _build_dir + "/" + std::to_string(new_tablet->tablet_id()) + ".hdr";
     TabletMetaSharedPtr new_tablet_meta = std::make_shared<TabletMeta>();
     new_tablet->generate_tablet_meta_copy(new_tablet_meta);
-    auto st = new_tablet_meta->save(local_new_header);
+    auto rowsets = new_tablet_meta->all_rs_metas();
+    if (rowsets.size() != 1) {
+        LOG(FATAL) << "rowset num from meta must be 1";
+    }
+    std::string local_rowset_meta = _build_dir + "/segment/rowset_meta.json";
+    auto st = rowsets[0]->save_json_file(local_rowset_meta);
+    if (!st.ok()) {
+        int reTry = 3;
+        LOG(WARNING) << " save rowset meta file error..., need retry...";
+        while(--reTry >=0 && !st.ok()) {
+            std::filesystem::remove(local_rowset_meta);
+            st = rowsets[0]->save_json_file(local_rowset_meta);
+        }
+        if (reTry < 0) {
+            LOG(WARNING) << " save rowset meta fail...";
+            std::exit(1);
+        }
+    }
+
+    std::string local_new_header = _build_dir + "/tablet_meta/" + std::to_string(new_tablet->tablet_id()) + ".hdr";
+    std::filesystem::create_directory(_build_dir + "/tablet_meta/");
+
+    st = new_tablet_meta->save(local_new_header);
     // post check
     std::filesystem::path header = local_new_header;
     if (!st.ok()) {
-        LOG(WARNING) << " save meta file error..., need retry...";
+        LOG(WARNING) << " save tablet meta file error..., need retry...";
         std::filesystem::remove(header);
         int reTry = 3;
         while (--reTry >= 0 && !st.ok()) {
@@ -162,7 +193,7 @@ Status BuildHelper::build() {
         }
 
         if (reTry < 0) {
-            LOG(WARNING) << " save meta fail...";
+            LOG(WARNING) << " save tablet meta fail...";
             std::exit(1);
         }
     }
@@ -172,6 +203,16 @@ Status BuildHelper::build() {
         std::exit(1);
     }
     LOG(INFO) << " got header size:" << header_size;
+    return Status::OK();
+}
+
+Status BuildHelper::close() {
+    doris::StorageEngine* engine = doris::ExecEnv::GetInstance()->storage_engine();
+    if (engine == nullptr) {
+        LOG(FATAL) << "storage engine is null" ;
+    }
+    RETURN_IF_ERROR(engine->stop_bg_threads());
+    engine->stop();
     return Status::OK();
 }
 
