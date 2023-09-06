@@ -322,7 +322,7 @@ public:
                           const DataTypePtr& return_type) const final {
         const DataTypePtr& func_return_type = get_return_type(arguments);
         // check return types equal.
-        DCHECK(return_type->equals(*func_return_type) ||
+        DCHECK(get_name() == "CAST" || return_type->equals(*func_return_type) ||
                // For null constant argument, `get_return_type` would return
                // Nullable<DataTypeNothing> when `use_default_implementation_for_nulls` is true.
                (return_type->is_nullable() && func_return_type->is_nullable() &&
