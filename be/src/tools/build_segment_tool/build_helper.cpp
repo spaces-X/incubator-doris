@@ -105,12 +105,21 @@ Status BuildHelper::build() {
     // load meta file
     io::FileReaderSPtr file_reader;
     TabletMeta* tablet_meta = new TabletMeta();
-    Status status = tablet_meta->create_from_file(_meta_file);
-    if (!status.ok()) {
-        std::cout << "load pb meta file:" << _meta_file << " failed"
-                  << ", status:" << status << std::endl;
-        return status;
+    if (_meta_file.ends_with(".json")) {
+        // json type: for initing meta from json file
+        std::string json_str;
+        std::filesystem::path meta_file_path(_meta_file);
+        RETURN_IF_ERROR(read_file_to_string(io::global_local_filesystem(), meta_file_path, &json_str));
+        RETURN_IF_ERROR(tablet_meta->create_from_json(json_str));
+    } else {
+        // default: for initing meta from PB
+        RETURN_IF_ERROR(tablet_meta->create_from_file(_meta_file));
     }
+//    if (!status.ok()) {
+//        std::cout << "load pb meta file:" << _meta_file << " failed"
+//                  << ", status:" << status << std::endl;
+//        return status;
+//    }
 
     LOG(INFO) << "table id:" << tablet_meta->table_id() << " tablet id:" << tablet_meta->tablet_id()
               << " shard id:" << tablet_meta->shard_id();
@@ -126,7 +135,7 @@ Status BuildHelper::build() {
     auto data_dir = StorageEngine::instance()->get_store(_build_dir);
     TabletMetaSharedPtr tablet_meta_ptr(tablet_meta);
     TabletSharedPtr new_tablet = doris::Tablet::create_tablet_from_meta(tablet_meta_ptr, data_dir);
-    status = StorageEngine::instance()->tablet_manager()->add_tablet_unlocked(
+    Status status = StorageEngine::instance()->tablet_manager()->add_tablet_unlocked(
             tablet_meta->tablet_id(), new_tablet, false, true);
 
     if (!status.ok()) {
