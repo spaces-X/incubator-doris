@@ -26,6 +26,7 @@
 
 #include "common/logging.h"
 #include "google/protobuf/util/message_differencer.h"
+#include "io/fs/file_writer.h"
 #include "io/fs/file_system.h"
 #include "io/fs/local_file_system.h"
 #include "json2pb/json_to_pb.h"
@@ -85,6 +86,17 @@ public:
         json_options.pretty_json = true;
         bool ret = json2pb::ProtoMessageToJson(_rowset_meta_pb, json_rowset_meta, json_options);
         return ret;
+    }
+
+    virtual Status save_json_file(const std::string& file_path) {
+        io::FileWriterPtr file_writer;
+        RETURN_IF_ERROR(io::global_local_filesystem()->create_file(file_path, &file_writer));
+        std::string json_meta;
+        if (!json_rowset_meta(&json_meta)) {
+            return Status::InternalError("can not rowset convert to json str, rowset id is:{}", rowset_id().to_string());
+        }
+        RETURN_IF_ERROR(file_writer->append(Slice(json_meta.c_str(), json_meta.size())));
+        return file_writer->close();
     }
 
     // This method may return nullptr.

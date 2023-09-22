@@ -146,15 +146,34 @@ Status BuildHelper::build() {
     BuilderScannerMemtable scanner(new_tablet, _build_dir, _file_type);
     scanner.doSegmentBuild(files);
 
-    std::string local_new_header =
-            _build_dir + "/" + std::to_string(new_tablet->tablet_id()) + ".hdr";
     TabletMetaSharedPtr new_tablet_meta = std::make_shared<TabletMeta>();
     new_tablet->generate_tablet_meta_copy(new_tablet_meta);
-    auto st = new_tablet_meta->save(local_new_header);
+    auto rowsets = new_tablet_meta->all_rs_metas();
+    if (rowsets.size() != 1) {
+        LOG(FATAL) << "rowset num from meta must be 1";
+    }
+    std::string local_rowset_meta = _build_dir + "/segment/rowset_meta.json";
+    auto st = rowsets[0]->save_json_file(local_rowset_meta);
+    if (!st.ok()) {
+        int reTry = 3;
+        LOG(WARNING) << " save rowset meta file error..., need retry...";
+        while(--reTry >=0 && !st.ok()) {
+            std::filesystem::remove(local_rowset_meta);
+            st = rowsets[0]->save_json_file(local_rowset_meta);
+        }
+        if (reTry < 0) {
+            LOG(WARNING) << " save rowset meta fail...";
+            std::exit(1);
+        }
+    }
+
+    std::string local_new_header = _build_dir + "/tablet_meta/" + std::to_string(new_tablet->tablet_id()) + ".hdr";
+
+    st = new_tablet_meta->save(local_new_header);
     // post check
     std::filesystem::path header = local_new_header;
     if (!st.ok()) {
-        LOG(WARNING) << " save meta file error..., need retry...";
+        LOG(WARNING) << " save tablet meta file error..., need retry...";
         std::filesystem::remove(header);
         int reTry = 3;
         while (--reTry >= 0 && !st.ok()) {
@@ -162,7 +181,7 @@ Status BuildHelper::build() {
         }
 
         if (reTry < 0) {
-            LOG(WARNING) << " save meta fail...";
+            LOG(WARNING) << " save tablet meta fail...";
             std::exit(1);
         }
     }
