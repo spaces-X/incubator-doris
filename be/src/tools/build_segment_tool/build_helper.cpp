@@ -18,11 +18,13 @@
 #include "olap/tablet_schema_cache.h"
 #include "runtime/exec_env.h"
 #include "tools/build_segment_tool/builder_scanner_memtable.h"
+#include "tools/build_segment_tool/rowset_writer_compaction.h"
 #include "util/disk_info.h"
 #include "util/mem_info.h"
 
 namespace doris {
 
+RowsetId segment_builder_default_rid = {1,1,1,1};
 BuildHelper* BuildHelper::_s_instance = nullptr;
 
 BuildHelper* BuildHelper::init_instance() {
@@ -103,7 +105,53 @@ void BuildHelper::open(const std::string& meta_file, const std::string& build_di
     EXIT_IF_ERROR(engine->start_bg_threads());
 }
 
-Status BuildHelper::build() {
+Status BuildHelper::seg_compaction() {
+    TabletSharedPtr new_tablet = nullptr;
+    Status status = _init_tablet(new_tablet);
+    if (!status.ok()) {
+        LOG(FATAL) << "fail to init tablet to storage :" << status.to_string();
+        return status;
+    }
+//    TabletManager* tablet_mgr = StorageEngine::instance()->tablet_manager();
+//    TabletSharedPtr tablet = tablet_mgr->get_tablet(new_tablet->tablet_id());
+    PUniqueId load_id;
+    load_id.set_hi(1);
+    load_id.set_lo(1);
+    RowsetIdUnorderedSet rowset_ids;
+    DeleteBitmapPtr delete_bitmap = nullptr;
+    int cur_max_version = 0;
+    if (new_tablet->enable_unique_key_merge_on_write()) {
+        if (delete_bitmap == nullptr) {
+            delete_bitmap.reset(new DeleteBitmap(new_tablet->tablet_id()));
+        }
+        std::lock_guard<std::shared_mutex> lck(new_tablet->get_header_lock());
+        cur_max_version = new_tablet->max_version_unlocked().second;
+        rowset_ids = new_tablet->all_rs_id(cur_max_version);
+    }
+    std::unique_ptr<RowsetWriter> rowset_writer = nullptr;
+    RowsetWriterContext context;
+    context.txn_id = 1;
+    context.load_id = load_id;
+    context.rowset_state = PREPARED;
+    context.segments_overlap = OVERLAPPING;
+    context.tablet_schema = new_tablet->tablet_schema();
+    context.newest_write_timestamp = UnixSeconds();
+    context.tablet_id = new_tablet->table_id();
+    context.tablet = new_tablet;
+    context.is_direct_write = true;
+    context.mow_context =
+            std::make_shared<MowContext>(cur_max_version, rowset_ids, delete_bitmap);
+    context.rowset_id = segment_builder_default_rid;
+    new_tablet->create_rowset_writer(context, &rowset_writer);
+
+    rowset_writer->set_writer_path(_build_dir + "/segment");
+    RowsetWriterCompaction rwc(std::move(rowset_writer), _build_dir + "/rowset_meta_dir");
+    RETURN_IF_ERROR(rwc.init_rowset_writer_by_metas());
+    RETURN_IF_ERROR(rwc.doSegCompacton());
+    return Status::OK();
+}
+
+Status BuildHelper::_init_tablet(TabletSharedPtr& input) {
     // load meta file
     io::FileReaderSPtr file_reader;
     TabletMeta* tablet_meta = new TabletMeta();
@@ -117,11 +165,11 @@ Status BuildHelper::build() {
         // default: for initing meta from PB
         RETURN_IF_ERROR(tablet_meta->create_from_file(_meta_file));
     }
-//    if (!status.ok()) {
-//        std::cout << "load pb meta file:" << _meta_file << " failed"
-//                  << ", status:" << status << std::endl;
-//        return status;
-//    }
+    //    if (!status.ok()) {
+    //        std::cout << "load pb meta file:" << _meta_file << " failed"
+    //                  << ", status:" << status << std::endl;
+    //        return status;
+    //    }
 
     LOG(INFO) << "table id:" << tablet_meta->table_id() << " tablet id:" << tablet_meta->tablet_id()
               << " shard id:" << tablet_meta->shard_id();
@@ -139,9 +187,16 @@ Status BuildHelper::build() {
     TabletSharedPtr new_tablet = doris::Tablet::create_tablet_from_meta(tablet_meta_ptr, data_dir);
     Status status = StorageEngine::instance()->tablet_manager()->add_tablet_unlocked(
             tablet_meta->tablet_id(), new_tablet, false, true);
+    input = std::move(new_tablet);
+    return status;
+}
 
+Status BuildHelper::build() {
+    TabletSharedPtr new_tablet = nullptr;
+
+    Status status = _init_tablet(new_tablet);
     if (!status.ok()) {
-        LOG(FATAL) << "fail to add tablet to storage :" << status.to_string();
+        LOG(FATAL) << "fail to init tablet to storage :" << status.to_string();
         return status;
     }
 

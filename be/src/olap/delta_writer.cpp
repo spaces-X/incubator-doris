@@ -203,6 +203,8 @@ Status DeltaWriter::init() {
     context.is_direct_write = true;
     context.mow_context =
             std::make_shared<MowContext>(_cur_max_version, _rowset_ids, _delete_bitmap);
+    context.rowset_id = _req.rid;
+
     RETURN_IF_ERROR(_tablet->create_rowset_writer(context, &_rowset_writer));
 
     _schema.reset(new Schema(_tablet_schema));

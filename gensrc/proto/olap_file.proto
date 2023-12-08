@@ -113,6 +113,9 @@ message RowsetMetaPB {
     reserved 50;
     // to indicate whether the data between the segments overlap
     optional SegmentsOverlapPB segments_overlap_pb = 51 [default = OVERLAP_UNKNOWN];
+    repeated int64 segment_num_rows = 101;
+    repeated int64 segment_data_disk_size = 102; 
+    repeated int64 segment_index_disk_size = 103;
 }
 
 // kv value for reclaiming remote rowset

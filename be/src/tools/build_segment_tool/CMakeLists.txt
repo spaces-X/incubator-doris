@@ -25,6 +25,7 @@ add_executable(segment_builder
     segment_builder.cpp
     build_helper.cpp
     builder_scanner_memtable.cpp
+    rowset_writer_compaction.cpp
     JNI/segment_builder_jni.cpp
 )
 

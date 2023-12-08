@@ -27,6 +27,7 @@ namespace doris {
 static const int TUPLE_ID_DST = 0;
 static const int TUPLE_ID_SRC = 1;
 static const int BATCH_SIZE = 8192;
+extern RowsetId segment_builder_default_rid;
 
 BuilderScannerMemtable::BuilderScannerMemtable(TabletSharedPtr tablet, const std::string& build_dir,
                                                const std::string& file_type)
@@ -592,7 +593,7 @@ void BuilderScannerMemtable::doSegmentBuild(
                               tuple_desc,
                               &(tuple_desc->slots()),
                               false,
-                              &param};
+                              &param, segment_builder_default_rid};
 
     DeltaWriter* delta_writer = nullptr;
     DeltaWriter::open(&write_req, &delta_writer, _runtime_state.runtime_profile(), load_id);

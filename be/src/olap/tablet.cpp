@@ -1811,7 +1811,10 @@ Status Tablet::create_vertical_rowset_writer(RowsetWriterContext& context,
 
 Status Tablet::create_rowset_writer(RowsetWriterContext& context,
                                     std::unique_ptr<RowsetWriter>* rowset_writer) {
-    context.rowset_id = StorageEngine::instance()->next_rowset_id();
+    if (context.rowset_id == RowsetId()) {
+        // rowset_id is not assigned
+        context.rowset_id = StorageEngine::instance()->next_rowset_id();
+    }
     _init_context_common_fields(context);
     return RowsetFactory::create_rowset_writer(context, false, rowset_writer);
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include "common/status.h"
+#include "olap/tablet.h"
 
 namespace doris {
 
@@ -14,9 +15,12 @@ public:
     void open(const std::string& meta_file, const std::string& build_dir,
               const std::string& data_path, const std::string& file_type);
     Status build();
+    Status seg_compaction();
+
     Status close();
 
 private:
+    Status _init_tablet(TabletSharedPtr& input);
     static BuildHelper* _s_instance;
     std::string _meta_file;
     std::string _build_dir;

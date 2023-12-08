@@ -137,6 +137,39 @@ Status BetaRowsetWriter::add_block(const vectorized::Block* block) {
     return _add_block(block, &_segment_writer);
 }
 
+void BetaRowsetWriter::load_segments_from_meta(const RowsetMetaSharedPtr& rowset_meta) {
+    if (loaded_seg_id == 0) {
+        _segid_statistics_map.clear();
+    }
+    std::vector<KeyBoundsPB> keys;
+    std::vector<int64_t> segment_num_rows;
+    std::vector<int64_t> segment_data_disk_size;
+    std::vector<int64_t> segment_index_disk_size;
+
+    rowset_meta->get_segments_key_bounds(&keys);
+    rowset_meta->get_segment_num_rows(&segment_num_rows);
+    rowset_meta->get_segment_data_disk_size(&segment_data_disk_size);
+    rowset_meta->get_segment_index_disk_size(&segment_index_disk_size);
+    DCHECK(keys.size() == segment_data_disk_size.size() && keys.size() == segment_index_disk_size.size()
+           && keys.size() == segment_num_rows.size());
+    for (int i = 0; i < keys.size(); ++i) {
+        Statistics segstat;
+        segstat.row_num = segment_num_rows[i];
+        segstat.data_size = segment_data_disk_size[i];
+        segstat.index_size = segment_index_disk_size[i];
+        segstat.key_bounds = keys[i];
+        {
+            std::lock_guard<std::mutex> lock(_segid_statistics_map_mutex);
+            DCHECK_EQ(_segid_statistics_map.find(loaded_seg_id) == _segid_statistics_map.end(),
+                      true);
+            _segid_statistics_map.emplace(loaded_seg_id++, segstat);
+        }
+    }
+    _num_segment += segment_num_rows.size();
+    _num_flushed_segment += segment_num_rows.size();
+
+}
+
 Status BetaRowsetWriter::_load_noncompacted_segments(
         std::vector<segment_v2::SegmentSharedPtr>* segments, size_t num) {
     auto fs = _rowset_meta->fs();
@@ -509,6 +542,36 @@ RowsetSharedPtr BetaRowsetWriter::manual_build(const RowsetMetaSharedPtr& spec_r
     return rowset;
 }
 
+Status BetaRowsetWriter::manual_segment_compaction() {
+    int retry = 0;
+    Status status;
+    while (_num_segment - _segcompacted_point > config::segcompaction_threshold_segment_num && retry++ < 3) {
+       status = _segcompaction_if_necessary();
+        if (!status.ok()) {
+            LOG(WARNING) << "submit segcompaction failed when manual_segment_compaction redo-times:" << retry <<", res=" << status;
+            return status;
+        }
+        status = wait_flying_segcompaction();
+        if (!status.ok()) {
+            LOG(WARNING) << "wait segcompaction failed when manual_segment_compaction redo-times:" << retry <<", res=" << status;
+            return status;
+        }
+    }
+    status = _segcompaction_ramaining_if_necessary();
+    if (!status.ok()) {
+        LOG(WARNING) << "submit segcompaction failed when manual_segment_compaction at last time, res=" << status;
+        return status;
+    }
+    status = wait_flying_segcompaction();
+    if (!status.ok()) {
+        LOG(WARNING) << "wait segcompaction failed when manual_segment_compaction at last time, res=" << status;
+        return status;
+    }
+
+    return Status::OK();
+}
+
+
 RowsetSharedPtr BetaRowsetWriter::build() {
     // TODO(lingbin): move to more better place, or in a CreateBlockBatch?
     for (auto& file_writer : _file_writers) {
@@ -521,9 +584,23 @@ RowsetSharedPtr BetaRowsetWriter::build() {
     }
     Status status;
     status = wait_flying_segcompaction();
+    int retry = 0;
     if (!status.ok()) {
-        LOG(WARNING) << "segcompaction failed when build new rowset 1st wait, res=" << status;
+        LOG(WARNING) << "wait segcompaction failed when build new rowset  redo time:" << retry <<", res=" << status;
         return nullptr;
+    }
+    while (_num_segment - _segcompacted_point > config::segcompaction_threshold_segment_num && retry++ < 3) {
+        status = _segcompaction_if_necessary();
+        if (!status.ok()) {
+            LOG(WARNING) << "submit segcompaction failed when build new rowset redo time:" << retry <<", res=" << status;
+            return nullptr;
+        }
+        status = wait_flying_segcompaction();
+        if (!status.ok()) {
+            LOG(WARNING) << "wait segcompaction failed when build new rowset redo time:" << retry <<", res=" << status;
+            return nullptr;
+        }
+
     }
     status = _segcompaction_ramaining_if_necessary();
     if (!status.ok()) {
@@ -532,7 +609,7 @@ RowsetSharedPtr BetaRowsetWriter::build() {
     }
     status = wait_flying_segcompaction();
     if (!status.ok()) {
-        LOG(WARNING) << "segcompaction failed when build new rowset 2nd wait, res=" << status;
+        LOG(WARNING) << "segcompaction failed when build new rowset last wait, res=" << status;
         return nullptr;
     }
 
@@ -614,12 +691,19 @@ void BetaRowsetWriter::_build_rowset_meta(std::shared_ptr<RowsetMeta> rowset_met
     int64_t total_data_size = 0;
     int64_t total_index_size = 0;
     std::vector<KeyBoundsPB> segments_encoded_key_bounds;
+    std::vector<int64_t> segment_row_nums;
+    std::vector<int64_t> segment_data_sizes;
+    std::vector<int64_t> segment_index_sizes;
+
     {
         std::lock_guard<std::mutex> lock(_segid_statistics_map_mutex);
         for (const auto& itr : _segid_statistics_map) {
             num_rows_written += itr.second.row_num;
+            segment_row_nums.push_back(itr.second.row_num);
             total_data_size += itr.second.data_size;
+            segment_data_sizes.push_back(itr.second.data_size);
             total_index_size += itr.second.index_size;
+            segment_index_sizes.push_back(itr.second.index_size);
             segments_encoded_key_bounds.push_back(itr.second.key_bounds);
         }
     }
@@ -638,6 +722,9 @@ void BetaRowsetWriter::_build_rowset_meta(std::shared_ptr<RowsetMeta> rowset_met
     rowset_meta->set_data_disk_size(total_data_size + _total_data_size);
     rowset_meta->set_index_disk_size(total_index_size + _total_index_size);
     rowset_meta->set_segments_key_bounds(segments_encoded_key_bounds);
+    rowset_meta->set_segment_num_rows(segment_row_nums);
+    rowset_meta->set_segment_data_disk_sizes(segment_data_sizes);
+    rowset_meta->set_segment_index_disk_sizes(segment_index_sizes);
     // TODO write zonemap to meta
     rowset_meta->set_empty((num_rows_written + _num_rows_written) == 0);
     rowset_meta->set_creation_time(time(nullptr));

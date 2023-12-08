@@ -75,6 +75,8 @@ public:
     // For ordered rowset compaction, manual build rowset
     virtual RowsetSharedPtr manual_build(const RowsetMetaSharedPtr& rowset_meta) = 0;
 
+    virtual Status manual_segment_compaction() = 0;
+
     virtual Version version() = 0;
 
     virtual int64_t num_rows() const = 0;
@@ -97,6 +99,8 @@ public:
 
     // for segment builder
     virtual void set_writer_path(const std::string &) {}
+
+    virtual void load_segments_from_meta(const RowsetMetaSharedPtr& rowset_meta) = 0;
 
 private:
     DISALLOW_COPY_AND_ASSIGN(RowsetWriter);

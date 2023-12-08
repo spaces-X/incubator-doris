@@ -88,6 +88,7 @@ public:
     RowsetSharedPtr build_tmp() override;
 
     RowsetSharedPtr manual_build(const RowsetMetaSharedPtr& rowset_meta) override;
+    Status manual_segment_compaction() override;
 
     Version version() override { return _context.version; }
 
@@ -121,6 +122,8 @@ public:
     Status wait_flying_segcompaction() override;
 
     void set_writer_path(const std::string& path) override { _context.rowset_dir = path; }
+
+    void load_segments_from_meta(const RowsetMetaSharedPtr& rowset_meta) override;
 
 private:
     Status _add_block(const vectorized::Block* block,
@@ -211,6 +214,7 @@ protected:
     fmt::memory_buffer vlog_buffer;
 
     std::shared_ptr<MowContext> _mow_context;
+    uint64_t loaded_seg_id = 0;
 };
 
 } // namespace doris

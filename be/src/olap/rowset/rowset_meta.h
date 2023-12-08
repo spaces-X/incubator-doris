@@ -337,6 +337,45 @@ public:
             segments_key_bounds->push_back(key_range);
         }
     }
+
+    void get_segment_num_rows(std::vector<int64_t>* segment_num_rows) {
+        for (int64_t num_rows : _rowset_meta_pb.segment_num_rows()) {
+            segment_num_rows->push_back(num_rows);
+        }
+    }
+
+    void set_segment_num_rows(const std::vector<int64_t>& segment_num_rows) {
+        for (const int64_t& num_row : segment_num_rows) {
+           _rowset_meta_pb.add_segment_num_rows(num_row);
+        }
+    }
+
+
+    void get_segment_data_disk_size(std::vector<int64_t>* segment_data_disk_size) {
+        for (int64_t data_disk_size : _rowset_meta_pb.segment_data_disk_size()) {
+            segment_data_disk_size->push_back(data_disk_size);
+        }
+    }
+
+    void set_segment_data_disk_sizes(const std::vector<int64_t>& segment_data_disk_size) {
+        for (const int64_t& data_disk_size : segment_data_disk_size) {
+            _rowset_meta_pb.add_segment_data_disk_size(data_disk_size);
+        }
+    }
+
+    void get_segment_index_disk_size(std::vector<int64_t>* segment_index_disk_size) {
+        for (int64_t index_disk_size : _rowset_meta_pb.segment_index_disk_size()) {
+            segment_index_disk_size->push_back(index_disk_size);
+        }
+    }
+
+    void set_segment_index_disk_sizes(const std::vector<int64_t>& segment_index_disk_size) {
+        for (const int64_t& index_disk_size : segment_index_disk_size) {
+            _rowset_meta_pb.add_segment_index_disk_size(index_disk_size);
+        }
+    }
+
+
     virtual bool get_first_segment_key_bound(KeyBoundsPB* key_bounds) {
         // for compatibility, old version has not segment key bounds
         if (_rowset_meta_pb.segments_key_bounds_size() == 0) {
