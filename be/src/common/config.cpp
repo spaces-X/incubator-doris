@@ -830,7 +830,7 @@ DEFINE_Int32(export_span_schedule_delay_millis, "500");
 
 // a soft limit of string type length, the hard limit is 2GB - 4, but if too long will cause very low performance,
 // so we set a soft limit, default is 1MB
-DEFINE_mInt32(string_type_length_soft_limit_bytes, "1048576");
+DEFINE_mInt32(string_type_length_soft_limit_bytes, "8388608");
 
 DEFINE_Validator(string_type_length_soft_limit_bytes,
                  [](const int config) -> bool { return config > 0 && config <= 2147483643; });
