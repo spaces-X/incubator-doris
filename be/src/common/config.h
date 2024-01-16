@@ -620,6 +620,8 @@ DECLARE_mBool(sync_tablet_meta);
 // default thrift rpc timeout ms
 DECLARE_mInt32(thrift_rpc_timeout_ms);
 
+
+
 // txn commit rpc timeout
 DECLARE_mInt32(txn_commit_rpc_timeout_ms);
 
