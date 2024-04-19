@@ -19,7 +19,6 @@ package org.apache.doris.nereids.trees.plans.logical;
 
 import org.apache.doris.nereids.memo.GroupExpression;
 import org.apache.doris.nereids.properties.LogicalProperties;
-import org.apache.doris.nereids.properties.UnboundLogicalProperties;
 import org.apache.doris.nereids.trees.expressions.Slot;
 import org.apache.doris.nereids.trees.plans.BinaryPlan;
 import org.apache.doris.nereids.trees.plans.Plan;
@@ -37,29 +36,16 @@ public abstract class LogicalBinary<
         extends AbstractLogicalPlan
         implements BinaryPlan<LEFT_CHILD_TYPE, RIGHT_CHILD_TYPE> {
 
-    public LogicalBinary(PlanType type, LEFT_CHILD_TYPE leftChild, RIGHT_CHILD_TYPE rightChild) {
-        super(type, Optional.empty(), leftChild, rightChild);
-    }
-
-    public LogicalBinary(PlanType type, Optional<LogicalProperties> logicalProperties,
-                             LEFT_CHILD_TYPE leftChild, RIGHT_CHILD_TYPE rightChild) {
-        super(type, logicalProperties, leftChild, rightChild);
-    }
-
     public LogicalBinary(PlanType type, Optional<GroupExpression> groupExpression,
                              Optional<LogicalProperties> logicalProperties, LEFT_CHILD_TYPE leftChild,
                              RIGHT_CHILD_TYPE rightChild) {
         super(type, groupExpression, logicalProperties, leftChild, rightChild);
     }
 
-    public abstract List<Slot> computeOutput();
-
-    @Override
-    public final LogicalProperties computeLogicalProperties() {
-        if (left().getLogicalProperties() instanceof UnboundLogicalProperties
-                || right().getLogicalProperties() instanceof UnboundLogicalProperties) {
-            return new UnboundLogicalProperties();
-        }
-        return new LogicalProperties(() -> computeOutput());
+    public LogicalBinary(PlanType type, Optional<GroupExpression> groupExpression,
+            Optional<LogicalProperties> logicalProperties, List<Plan> children) {
+        super(type, groupExpression, logicalProperties, children);
     }
+
+    public abstract List<Slot> computeOutput();
 }

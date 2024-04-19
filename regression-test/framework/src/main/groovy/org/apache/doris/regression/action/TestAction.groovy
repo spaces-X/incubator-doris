@@ -38,6 +38,7 @@ import org.apache.doris.regression.util.JdbcUtils
 import org.junit.Assert
 
 import java.util.function.Consumer
+import java.util.Random
 
 @Slf4j
 @CompileStatic
@@ -67,6 +68,7 @@ class TestAction implements SuiteAction {
             } else {
                 if (exception != null || result.exception != null) {
                     def msg = result.exception?.toString()
+                    log.info("Exception: ${msg}")
                     Assert.assertTrue("Expect exception msg contains '${exception}', but meet '${msg}'",
                             msg != null && exception != null && msg.contains(exception))
                 }
@@ -189,7 +191,7 @@ class TestAction implements SuiteAction {
         return new ActionResult(result, ex, startTime, endTime, meta)
     }
 
-    void sql(String sql) {
+    void sql(String sql, boolean setRandomParallel = true) {
         this.sql = sql
     }
 

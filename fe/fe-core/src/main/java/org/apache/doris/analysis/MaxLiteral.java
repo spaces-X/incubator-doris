@@ -50,6 +50,7 @@ public final class MaxLiteral extends LiteralExpr {
 
     @Override
     protected void toThrift(TExprNode msg) {
+        // TODO: complete this type
     }
 
     @Override
@@ -64,6 +65,16 @@ public final class MaxLiteral extends LiteralExpr {
 
     @Override
     public void write(DataOutput out) throws IOException {
+    }
+
+    @Override
+    public String getStringValue() {
+        return null;
+    }
+
+    @Override
+    public String getStringValueForArray() {
+        return null;
     }
 
     public void readFields(DataInput in) throws IOException {

@@ -17,12 +17,25 @@
 
 #include "vec/exec/vassert_num_rows_node.h"
 
-#include "gen_cpp/PlanNodes_types.h"
-#include "gutil/strings/substitute.h"
-#include "runtime/row_batch.h"
+#include <gen_cpp/PlanNodes_types.h>
+#include <glog/logging.h>
+
+#include <functional>
+#include <map>
+#include <memory>
+#include <ostream>
+#include <utility>
+#include <vector>
+
 #include "runtime/runtime_state.h"
-#include "util/runtime_profile.h"
 #include "vec/core/block.h"
+#include "vec/exprs/vexpr_context.h"
+#include "vec/utils/util.hpp"
+
+namespace doris {
+class DescriptorTbl;
+class ObjectPool;
+} // namespace doris
 
 namespace doris::vectorized {
 
@@ -36,10 +49,13 @@ VAssertNumRowsNode::VAssertNumRowsNode(ObjectPool* pool, const TPlanNode& tnode,
     } else {
         _assertion = TAssertion::LE; // just compatible for the previous code
     }
+
+    _should_convert_output_to_nullable =
+            tnode.assert_num_rows_node.__isset.should_convert_output_to_nullable &&
+            tnode.assert_num_rows_node.should_convert_output_to_nullable;
 }
 
 Status VAssertNumRowsNode::open(RuntimeState* state) {
-    START_AND_SCOPE_SPAN(state->get_tracer(), span, "VAssertNumRowsNode::open");
     SCOPED_TIMER(_runtime_profile->total_time_counter());
     RETURN_IF_ERROR(ExecNode::open(state));
     // ISSUE-3435
@@ -47,20 +63,17 @@ Status VAssertNumRowsNode::open(RuntimeState* state) {
     return Status::OK();
 }
 
-Status VAssertNumRowsNode::get_next(RuntimeState* state, Block* block, bool* eos) {
-    INIT_AND_SCOPE_GET_NEXT_SPAN(state->get_tracer(), _get_next_span,
-                                 "VAssertNumRowsNode::get_next");
-    SCOPED_TIMER(_runtime_profile->total_time_counter());
-    RETURN_IF_ERROR_AND_CHECK_SPAN(child(0)->get_next_after_projects(state, block, eos),
-                                   child(0)->get_next_span(), *eos);
+Status VAssertNumRowsNode::pull(doris::RuntimeState* state, vectorized::Block* block, bool* eos) {
     _num_rows_returned += block->rows();
     bool assert_res = false;
+    const auto has_more_rows = !(*eos);
     switch (_assertion) {
     case TAssertion::EQ:
-        assert_res = _num_rows_returned == _desired_num_rows;
+        assert_res = _num_rows_returned == _desired_num_rows ||
+                     (has_more_rows && _num_rows_returned < _desired_num_rows);
         break;
     case TAssertion::NE:
-        assert_res = _num_rows_returned != _desired_num_rows;
+        assert_res = _num_rows_returned != _desired_num_rows || has_more_rows;
         break;
     case TAssertion::LT:
         assert_res = _num_rows_returned < _desired_num_rows;
@@ -69,19 +82,47 @@ Status VAssertNumRowsNode::get_next(RuntimeState* state, Block* block, bool* eos
         assert_res = _num_rows_returned <= _desired_num_rows;
         break;
     case TAssertion::GT:
-        assert_res = _num_rows_returned > _desired_num_rows;
+        assert_res = _num_rows_returned > _desired_num_rows || has_more_rows;
         break;
     case TAssertion::GE:
-        assert_res = _num_rows_returned >= _desired_num_rows;
+        assert_res = _num_rows_returned >= _desired_num_rows || has_more_rows;
         break;
     default:
         break;
     }
 
+    /**
+     * For nereids planner:
+     * The output of `AssertNumRowsOperatorX` should be nullable.
+     * If the `_num_rows_returned` is 0 and `_desired_num_rows` is 1,
+     * here need to insert one row of null.
+     */
+    if (_should_convert_output_to_nullable) {
+        if (block->rows() > 0) {
+            for (size_t i = 0; i != block->columns(); ++i) {
+                auto& data = block->get_by_position(i);
+                data.type = vectorized::make_nullable(data.type);
+                data.column = vectorized::make_nullable(data.column);
+            }
+        } else if (!has_more_rows && _assertion == TAssertion::EQ && _num_rows_returned == 0 &&
+                   _desired_num_rows == 1) {
+            auto new_block =
+                    vectorized::VectorizedUtils::create_columns_with_type_and_name(_row_descriptor);
+            block->swap(new_block);
+            for (size_t i = 0; i != block->columns(); ++i) {
+                auto& column = block->get_by_position(i).column;
+                auto& type = block->get_by_position(i).type;
+                type = vectorized::make_nullable(type);
+                column = type->create_column();
+                column->assume_mutable()->insert_default();
+            }
+            assert_res = true;
+        }
+    }
+
     if (!assert_res) {
         auto to_string_lambda = [](TAssertion::type assertion) {
-            std::map<int, const char*>::const_iterator it =
-                    _TAssertion_VALUES_TO_NAMES.find(assertion);
+            auto it = _TAssertion_VALUES_TO_NAMES.find(assertion);
 
             if (it == _TAggregationOp_VALUES_TO_NAMES.end()) {
                 return "NULL";
@@ -95,7 +136,20 @@ Status VAssertNumRowsNode::get_next(RuntimeState* state, Block* block, bool* eos
                                  to_string_lambda(_assertion), _desired_num_rows, _subquery_string);
     }
     COUNTER_SET(_rows_returned_counter, _num_rows_returned);
+    RETURN_IF_ERROR(VExprContext::filter_block(_conjuncts, block, block->columns()));
     return Status::OK();
+}
+
+Status VAssertNumRowsNode::get_next(RuntimeState* state, Block* block, bool* eos) {
+    SCOPED_TIMER(_runtime_profile->total_time_counter());
+    RETURN_IF_ERROR(child(0)->get_next_after_projects(
+            state, block, eos,
+            std::bind((Status(ExecNode::*)(RuntimeState*, vectorized::Block*, bool*)) &
+                              ExecNode::get_next,
+                      _children[0], std::placeholders::_1, std::placeholders::_2,
+                      std::placeholders::_3)));
+
+    return pull(state, block, eos);
 }
 
 } // namespace doris::vectorized

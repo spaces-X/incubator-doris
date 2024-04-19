@@ -19,14 +19,19 @@ package org.apache.doris.task;
 
 import org.apache.doris.alter.SchemaChangeHandler;
 import org.apache.doris.analysis.DataSortInfo;
+import org.apache.doris.catalog.BinlogConfig;
 import org.apache.doris.catalog.Column;
+import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.Index;
 import org.apache.doris.catalog.KeysType;
 import org.apache.doris.common.MarkedCountDownLatch;
 import org.apache.doris.common.Status;
+import org.apache.doris.policy.Policy;
+import org.apache.doris.policy.PolicyTypeEnum;
 import org.apache.doris.thrift.TColumn;
 import org.apache.doris.thrift.TCompressionType;
 import org.apache.doris.thrift.TCreateTabletReq;
+import org.apache.doris.thrift.TInvertedIndexStorageFormat;
 import org.apache.doris.thrift.TOlapTableIndex;
 import org.apache.doris.thrift.TStatusCode;
 import org.apache.doris.thrift.TStorageFormat;
@@ -42,6 +47,7 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 public class CreateReplicaTask extends AgentTask {
@@ -84,15 +90,38 @@ public class CreateReplicaTask extends AgentTask {
     // TODO should unify the naming of v1(alpha rowset), v2(beta rowset), it is very confused to read code
     private TStorageFormat storageFormat = TStorageFormat.V2;
 
+    private TInvertedIndexStorageFormat invertedIndexStorageFormat = TInvertedIndexStorageFormat.V1;
+
     // true if this task is created by recover request(See comment of Config.recover_with_empty_tablet)
     private boolean isRecoverTask = false;
 
     private DataSortInfo dataSortInfo;
-    private static String storagePolicy;
+    private long storagePolicyId = 0; // <= 0 means no storage policy
 
     private boolean enableUniqueKeyMergeOnWrite;
 
     private boolean disableAutoCompaction;
+
+    private boolean enableSingleReplicaCompaction;
+
+    private boolean skipWriteIndexOnLoad;
+
+    private String compactionPolicy;
+
+    private long timeSeriesCompactionGoalSizeMbytes;
+
+    private long timeSeriesCompactionFileCountThreshold;
+
+    private long timeSeriesCompactionTimeThresholdSeconds;
+
+    private long timeSeriesCompactionEmptyRowsetsThreshold;
+
+    private long timeSeriesCompactionLevelThreshold;
+
+    private boolean storeRowColumn;
+
+    private BinlogConfig binlogConfig;
+    private List<Integer> clusterKeyIndexes;
 
     public CreateReplicaTask(long backendId, long dbId, long tableId, long partitionId, long indexId, long tabletId,
                              long replicaId, short shortKeyColumnCount, int schemaHash, long version,
@@ -105,7 +134,17 @@ public class CreateReplicaTask extends AgentTask {
                              DataSortInfo dataSortInfo,
                              TCompressionType compressionType,
                              boolean enableUniqueKeyMergeOnWrite,
-                             String storagePolicy, boolean disableAutoCompaction) {
+                             String storagePolicy, boolean disableAutoCompaction,
+                             boolean enableSingleReplicaCompaction,
+                             boolean skipWriteIndexOnLoad,
+                             String compactionPolicy,
+                             long timeSeriesCompactionGoalSizeMbytes,
+                             long timeSeriesCompactionFileCountThreshold,
+                             long timeSeriesCompactionTimeThresholdSeconds,
+                             long timeSeriesCompactionEmptyRowsetsThreshold,
+                             long timeSeriesCompactionLevelThreshold,
+                             boolean storeRowColumn,
+                             BinlogConfig binlogConfig) {
         super(null, backendId, TTaskType.CREATE, dbId, tableId, partitionId, indexId, tabletId);
 
         this.replicaId = replicaId;
@@ -131,8 +170,24 @@ public class CreateReplicaTask extends AgentTask {
         this.tabletType = tabletType;
         this.dataSortInfo = dataSortInfo;
         this.enableUniqueKeyMergeOnWrite = (keysType == KeysType.UNIQUE_KEYS && enableUniqueKeyMergeOnWrite);
-        this.storagePolicy = storagePolicy;
+        if (storagePolicy != null && !storagePolicy.isEmpty()) {
+            Optional<Policy> policy = Env.getCurrentEnv().getPolicyMgr()
+                    .findPolicy(storagePolicy, PolicyTypeEnum.STORAGE);
+            if (policy.isPresent()) {
+                this.storagePolicyId = policy.get().getId();
+            }
+        }
         this.disableAutoCompaction = disableAutoCompaction;
+        this.enableSingleReplicaCompaction = enableSingleReplicaCompaction;
+        this.skipWriteIndexOnLoad = skipWriteIndexOnLoad;
+        this.compactionPolicy = compactionPolicy;
+        this.timeSeriesCompactionGoalSizeMbytes = timeSeriesCompactionGoalSizeMbytes;
+        this.timeSeriesCompactionFileCountThreshold = timeSeriesCompactionFileCountThreshold;
+        this.timeSeriesCompactionTimeThresholdSeconds = timeSeriesCompactionTimeThresholdSeconds;
+        this.timeSeriesCompactionEmptyRowsetsThreshold = timeSeriesCompactionEmptyRowsetsThreshold;
+        this.timeSeriesCompactionLevelThreshold = timeSeriesCompactionLevelThreshold;
+        this.storeRowColumn = storeRowColumn;
+        this.binlogConfig = binlogConfig;
     }
 
     public void setIsRecoverTask(boolean isRecoverTask) {
@@ -146,8 +201,10 @@ public class CreateReplicaTask extends AgentTask {
     public void countDownLatch(long backendId, long tabletId) {
         if (this.latch != null) {
             if (latch.markedCountDown(backendId, tabletId)) {
-                LOG.debug("CreateReplicaTask current latch count: {}, backend: {}, tablet:{}",
-                          latch.getCount(), backendId, tabletId);
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("CreateReplicaTask current latch count: {}, backend: {}, tablet:{}",
+                              latch.getCount(), backendId, tabletId);
+                }
             }
         }
     }
@@ -156,7 +213,9 @@ public class CreateReplicaTask extends AgentTask {
     public void countDownToZero(String errMsg) {
         if (this.latch != null) {
             latch.countDownToZero(new Status(TStatusCode.CANCELLED, errMsg));
-            LOG.debug("CreateReplicaTask download to zero. error msg: {}", errMsg);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("CreateReplicaTask download to zero. error msg: {}", errMsg);
+            }
         }
     }
 
@@ -177,6 +236,14 @@ public class CreateReplicaTask extends AgentTask {
         this.storageFormat = storageFormat;
     }
 
+    public void setInvertedIndexStorageFormat(TInvertedIndexStorageFormat invertedIndexStorageFormat) {
+        this.invertedIndexStorageFormat = invertedIndexStorageFormat;
+    }
+
+    public void setClusterKeyIndexes(List<Integer> clusterKeyIndexes) {
+        this.clusterKeyIndexes = clusterKeyIndexes;
+    }
+
     public TCreateTabletReq toThrift() {
         TCreateTabletReq createTabletReq = new TCreateTabletReq();
         createTabletReq.setTabletId(tabletId);
@@ -192,6 +259,7 @@ public class CreateReplicaTask extends AgentTask {
         }
         int deleteSign = -1;
         int sequenceCol = -1;
+        int versionCol = -1;
         List<TColumn> tColumns = new ArrayList<TColumn>();
         for (int i = 0; i < columns.size(); i++) {
             Column column = columns.get(i);
@@ -202,8 +270,8 @@ public class CreateReplicaTask extends AgentTask {
             }
             // when doing schema change, some modified column has a prefix in name.
             // this prefix is only used in FE, not visible to BE, so we should remove this prefix.
-            if (column.getName().startsWith(SchemaChangeHandler.SHADOW_NAME_PRFIX)) {
-                tColumn.setColumnName(column.getName().substring(SchemaChangeHandler.SHADOW_NAME_PRFIX.length()));
+            if (column.getName().startsWith(SchemaChangeHandler.SHADOW_NAME_PREFIX)) {
+                tColumn.setColumnName(column.getName().substring(SchemaChangeHandler.SHADOW_NAME_PREFIX.length()));
             }
             tColumn.setVisible(column.isVisible());
             tColumns.add(tColumn);
@@ -213,11 +281,20 @@ public class CreateReplicaTask extends AgentTask {
             if (column.isSequenceColumn()) {
                 sequenceCol = i;
             }
+            if (column.isVersionColumn()) {
+                versionCol = i;
+            }
         }
         tSchema.setColumns(tColumns);
         tSchema.setDeleteSignIdx(deleteSign);
         tSchema.setSequenceColIdx(sequenceCol);
-
+        tSchema.setVersionColIdx(versionCol);
+        if (!CollectionUtils.isEmpty(clusterKeyIndexes)) {
+            tSchema.setClusterKeyIdxes(clusterKeyIndexes);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("cluster key index={}, table_id={}, tablet_id={}", clusterKeyIndexes, tableId, tabletId);
+            }
+        }
         if (CollectionUtils.isNotEmpty(indexes)) {
             List<TOlapTableIndex> tIndexes = new ArrayList<>();
             for (Index index : indexes) {
@@ -232,12 +309,17 @@ public class CreateReplicaTask extends AgentTask {
         }
         tSchema.setIsInMemory(isInMemory);
         tSchema.setDisableAutoCompaction(disableAutoCompaction);
+        tSchema.setEnableSingleReplicaCompaction(enableSingleReplicaCompaction);
+        tSchema.setSkipWriteIndexOnLoad(skipWriteIndexOnLoad);
+        tSchema.setStoreRowColumn(storeRowColumn);
         createTabletReq.setTabletSchema(tSchema);
 
         createTabletReq.setVersion(version);
 
         createTabletReq.setStorageMedium(storageMedium);
-        createTabletReq.setStoragePolicy(storagePolicy);
+        if (storagePolicyId > 0) {
+            createTabletReq.setStoragePolicyId(storagePolicyId);
+        }
         if (inRestoreMode) {
             createTabletReq.setInRestoreMode(true);
         }
@@ -254,9 +336,23 @@ public class CreateReplicaTask extends AgentTask {
             createTabletReq.setStorageFormat(storageFormat);
         }
 
+        if (invertedIndexStorageFormat != null) {
+            createTabletReq.setInvertedIndexStorageFormat(invertedIndexStorageFormat);
+        }
         createTabletReq.setTabletType(tabletType);
         createTabletReq.setCompressionType(compressionType);
         createTabletReq.setEnableUniqueKeyMergeOnWrite(enableUniqueKeyMergeOnWrite);
+        createTabletReq.setCompactionPolicy(compactionPolicy);
+        createTabletReq.setTimeSeriesCompactionGoalSizeMbytes(timeSeriesCompactionGoalSizeMbytes);
+        createTabletReq.setTimeSeriesCompactionFileCountThreshold(timeSeriesCompactionFileCountThreshold);
+        createTabletReq.setTimeSeriesCompactionTimeThresholdSeconds(timeSeriesCompactionTimeThresholdSeconds);
+        createTabletReq.setTimeSeriesCompactionEmptyRowsetsThreshold(timeSeriesCompactionEmptyRowsetsThreshold);
+        createTabletReq.setTimeSeriesCompactionLevelThreshold(timeSeriesCompactionLevelThreshold);
+
+        if (binlogConfig != null) {
+            createTabletReq.setBinlogConfig(binlogConfig.toThrift());
+        }
+
         return createTabletReq;
     }
 }

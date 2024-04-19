@@ -33,9 +33,11 @@ import org.apache.doris.catalog.TableIf.TableType;
 import org.apache.doris.catalog.Tablet;
 import org.apache.doris.catalog.View;
 import org.apache.doris.common.FeConstants;
+import org.apache.doris.common.Version;
 import org.apache.doris.common.io.Text;
 import org.apache.doris.common.io.Writable;
 import org.apache.doris.persist.gson.GsonUtils;
+import org.apache.doris.thrift.TNetworkAddress;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
@@ -91,10 +93,48 @@ public class BackupJobInfo implements Writable {
 
     @SerializedName("meta_version")
     public int metaVersion;
+    @SerializedName("major_version")
+    public int majorVersion;
+    @SerializedName("minor_version")
+    public int minorVersion;
+    @SerializedName("patch_version")
+    public int patchVersion;
+
+    @SerializedName("tablet_be_map")
+    public Map<Long, Long> tabletBeMap = Maps.newHashMap();
+
+    @SerializedName("tablet_snapshot_path_map")
+    public Map<Long, String> tabletSnapshotPathMap = Maps.newHashMap();
+
+    @SerializedName("table_commit_seq_map")
+    public Map<Long, Long> tableCommitSeqMap;
+
+    public static class ExtraInfo {
+        public static class NetworkAddrss {
+            @SerializedName("ip")
+            public String ip;
+            @SerializedName("port")
+            public int port;
+        }
+
+        @SerializedName("be_network_map")
+        public Map<Long, NetworkAddrss> beNetworkMap = Maps.newHashMap();
+
+        @SerializedName("token")
+        public String token;
+    }
+
+    @SerializedName("extra_info")
+    public ExtraInfo extraInfo;
+
 
     // This map is used to save the table alias mapping info when processing a restore job.
     // origin -> alias
     public Map<String, String> tblAlias = Maps.newHashMap();
+
+    public long getBackupTime() {
+        return backupTime;
+    }
 
     public void initBackupJobInfoAfterDeserialize() {
         // transform success
@@ -237,17 +277,18 @@ public class BackupJobInfo implements Writable {
 
     public void retainOdbcTables(Set<String> odbcTableNames) {
         Iterator<BackupOdbcTableInfo> odbcIter = newBackupObjects.odbcTables.listIterator();
-        Set<String> removedOdbcResourceNames = Sets.newHashSet();
+        Set<String> retainOdbcResourceNames = Sets.newHashSet();
         while (odbcIter.hasNext()) {
             BackupOdbcTableInfo backupOdbcTableInfo = odbcIter.next();
             if (!odbcTableNames.contains(backupOdbcTableInfo.dorisTableName)) {
-                removedOdbcResourceNames.add(backupOdbcTableInfo.resourceName);
                 odbcIter.remove();
+            } else {
+                retainOdbcResourceNames.add(backupOdbcTableInfo.resourceName);
             }
         }
         Iterator<BackupOdbcResourceInfo> resourceIter = newBackupObjects.odbcResources.listIterator();
         while (resourceIter.hasNext()) {
-            if (removedOdbcResourceNames.contains(resourceIter.next().name)) {
+            if (!retainOdbcResourceNames.contains(resourceIter.next().name)) {
                 resourceIter.remove();
             }
         }
@@ -443,25 +484,33 @@ public class BackupJobInfo implements Writable {
     // eg: __db_10001/__tbl_10002/__part_10003/__idx_10002/__10004
     public String getFilePath(String db, String tbl, String part, String idx, long tabletId) {
         if (!db.equalsIgnoreCase(dbName)) {
-            LOG.debug("db name does not equal: {}-{}", dbName, db);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("db name does not equal: {}-{}", dbName, db);
+            }
             return null;
         }
 
         BackupOlapTableInfo tblInfo = backupOlapTableObjects.get(tbl);
         if (tblInfo == null) {
-            LOG.debug("tbl {} does not exist", tbl);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("tbl {} does not exist", tbl);
+            }
             return null;
         }
 
         BackupPartitionInfo partInfo = tblInfo.getPartInfo(part);
         if (partInfo == null) {
-            LOG.debug("part {} does not exist", part);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("part {} does not exist", part);
+            }
             return null;
         }
 
         BackupIndexInfo idxInfo = partInfo.getIdx(idx);
         if (idxInfo == null) {
-            LOG.debug("idx {} does not exist", idx);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("idx {} does not exist", idx);
+            }
             return null;
         }
 
@@ -487,9 +536,65 @@ public class BackupJobInfo implements Writable {
         return Joiner.on("/").join(pathSeg);
     }
 
+    // struct TRemoteTabletSnapshot {
+    //     1: optional i64 local_tablet_id
+    //     2: optional string local_snapshot_path
+    //     3: optional i64 remote_tablet_id
+    //     4: optional i64 remote_be_id
+    //     5: optional Types.TSchemaHash schema_hash
+    //     6: optional Types.TNetworkAddress remote_be_addr
+    //     7: optional string remote_snapshot_path
+    //     8: optional string token
+    // }
+
+    public String getTabletSnapshotPath(Long tabletId) {
+        return tabletSnapshotPathMap.get(tabletId);
+    }
+
+    public Long getBeId(Long tabletId) {
+        return tabletBeMap.get(tabletId);
+    }
+
+    public String getToken() {
+        return extraInfo.token;
+    }
+
+    public TNetworkAddress getBeAddr(Long beId) {
+        ExtraInfo.NetworkAddrss addr = extraInfo.beNetworkMap.get(beId);
+        if (addr == null) {
+            return null;
+        }
+
+        return new TNetworkAddress(addr.ip, addr.port);
+    }
+
+    // TODO(Drogon): improve this find perfermance
+    public Long getSchemaHash(long tableId, long partitionId, long indexId) {
+        for (BackupOlapTableInfo backupOlapTableInfo : backupOlapTableObjects.values()) {
+            if (backupOlapTableInfo.id != tableId) {
+                continue;
+            }
+
+            for (BackupPartitionInfo backupPartitionInfo : backupOlapTableInfo.partitions.values()) {
+                if (backupPartitionInfo.id != partitionId) {
+                    continue;
+                }
+
+                for (BackupIndexInfo backupIndexInfo : backupPartitionInfo.indexes.values()) {
+                    if (backupIndexInfo.id != indexId) {
+                        continue;
+                    }
+
+                    return Long.valueOf(backupIndexInfo.schemaHash);
+                }
+            }
+        }
+        return null;
+    }
+
     public static BackupJobInfo fromCatalog(long backupTime, String label, String dbName, long dbId,
                                             BackupContent content, BackupMeta backupMeta,
-                                            Map<Long, SnapshotInfo> snapshotInfos) {
+                                            Map<Long, SnapshotInfo> snapshotInfos, Map<Long, Long> tableCommitSeqMap) {
 
         BackupJobInfo jobInfo = new BackupJobInfo();
         jobInfo.backupTime = backupTime;
@@ -498,6 +603,10 @@ public class BackupJobInfo implements Writable {
         jobInfo.dbId = dbId;
         jobInfo.metaVersion = FeConstants.meta_version;
         jobInfo.content = content;
+        jobInfo.tableCommitSeqMap = tableCommitSeqMap;
+        jobInfo.majorVersion = Version.DORIS_BUILD_VERSION_MAJOR;
+        jobInfo.minorVersion = Version.DORIS_BUILD_VERSION_MINOR;
+        jobInfo.patchVersion = Version.DORIS_BUILD_VERSION_PATCH;
 
         Collection<Table> tbls = backupMeta.getTables().values();
         // tbls
@@ -526,8 +635,11 @@ public class BackupJobInfo implements Writable {
                             }
                         } else {
                             for (Tablet tablet : index.getTablets()) {
+                                SnapshotInfo snapshotInfo = snapshotInfos.get(tablet.getId());
                                 idxInfo.tablets.put(tablet.getId(),
-                                        Lists.newArrayList(snapshotInfos.get(tablet.getId()).getFiles()));
+                                        Lists.newArrayList(snapshotInfo.getFiles()));
+                                jobInfo.tabletBeMap.put(tablet.getId(), snapshotInfo.getBeId());
+                                jobInfo.tabletSnapshotPathMap.put(tablet.getId(), snapshotInfo.getPath());
                             }
                         }
                         idxInfo.tabletsOrder.addAll(index.getTabletIdsInOrder());
@@ -578,7 +690,7 @@ public class BackupJobInfo implements Writable {
         return genFromJson(json);
     }
 
-    private static BackupJobInfo genFromJson(String json) {
+    public static BackupJobInfo genFromJson(String json) {
         /* parse the json string:
          * {
          *   "backup_time": 1522231864000,

@@ -19,7 +19,7 @@ suite("test_ntile_function") {
 
     sql """ DROP TABLE IF EXISTS ${tableName} """
     sql """
-            CREATE TABLE `${tableName}` (
+            CREATE TABLE IF NOT EXISTS `${tableName}` (
             `k1` tinyint(4) NOT NULL COMMENT "",
             `k2` smallint(6) NOT NULL COMMENT "",
             `k3` smallint(6) NOT NULL COMMENT ""
@@ -64,21 +64,22 @@ suite("test_ntile_function") {
             assertTrue(json.NumberLoadedRows > 0 && json.LoadBytes > 0)
         }
     }
-    // Not Vectorized
-    sql """ set enable_vectorized_engine = false """
+    sql "sync"
 
     qt_select "select k1, k2, k3, ntile(3) over (partition by k1 order by k2) as ntile from ${tableName} order by k1, k2, k3 desc;"
     qt_select "select k1, k2, k3, ntile(5) over (partition by k1 order by k2) as ntile from ${tableName} order by k1, k2, k3 desc;"
     qt_select "select k2, k1, k3, ntile(3) over (order by k2) as ntile from ${tableName} order by k2, k1, k3 desc;"
     qt_select "select k3, k2, k1, ntile(3) over (partition by k3 order by k2) as ntile from ${tableName} order by k3, k2, k1;"
 
-    // vectorized
-    sql """ set enable_vectorized_engine = true """
+    test {
+        sql "select k1, k2, k3, ntile(0) over (partition by k1 order by k2) as ntile from ${tableName} order by k1, k2, k3 desc;"
+        exception "positive"
+    }
 
-    qt_select "select k1, k2, k3, ntile(3) over (partition by k1 order by k2) as ntile from ${tableName} order by k1, k2, k3 desc;"
-    qt_select "select k1, k2, k3, ntile(5) over (partition by k1 order by k2) as ntile from ${tableName} order by k1, k2, k3 desc;"
-    qt_select "select k2, k1, k3, ntile(3) over (order by k2) as ntile from ${tableName} order by k2, k1, k3 desc;"
-    qt_select "select k3, k2, k1, ntile(3) over (partition by k3 order by k2) as ntile from ${tableName} order by k3, k2, k1;"
+    test {
+        sql "select k1, k2, k3, ntile(k1) over (partition by k1 order by k2) as ntile from ${tableName} order by k1, k2, k3 desc;"
+        exception ""
+    }
 }
 
 

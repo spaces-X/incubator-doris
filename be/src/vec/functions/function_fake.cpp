@@ -17,11 +17,24 @@
 
 #include "vec/functions/function_fake.h"
 
-#include <boost/metaparse/string.hpp>
-#include <string_view>
-#include <type_traits>
+#include <glog/logging.h>
 
+#include <algorithm>
+#include <boost/iterator/iterator_facade.hpp>
+#include <ostream>
+#include <string>
+
+#include "vec/aggregate_functions/aggregate_function.h"
+#include "vec/data_types/data_type_array.h"
+#include "vec/data_types/data_type_jsonb.h"
+#include "vec/data_types/data_type_map.h"
 #include "vec/data_types/data_type_nullable.h"
+#include "vec/data_types/data_type_number.h"
+#include "vec/data_types/data_type_string.h"
+#include "vec/data_types/data_type_struct.h"
+#include "vec/exprs/table_function/table_function.h"
+#include "vec/functions/function_helpers.h"
+#include "vec/functions/simple_function_factory.h"
 
 namespace doris::vectorized {
 
@@ -33,6 +46,7 @@ struct FunctionFakeBaseImpl {
         }
         return std::make_shared<ReturnType>();
     }
+    static std::string get_error_msg() { return "Fake function do not support execute"; }
 };
 
 struct FunctionExplode {
@@ -41,11 +55,31 @@ struct FunctionExplode {
         return make_nullable(
                 check_and_get_data_type<DataTypeArray>(arguments[0].get())->get_nested_type());
     }
+    static std::string get_error_msg() { return "Fake function do not support execute"; }
 };
 
-template <typename ReturnType, bool Nullable = false>
-void register_function_default(SimpleFunctionFactory& factory, const std::string& name) {
-    factory.register_function<FunctionFake<FunctionFakeBaseImpl<ReturnType, Nullable>>>(name);
+// explode map: make map k,v as struct field
+struct FunctionExplodeMap {
+    static DataTypePtr get_return_type_impl(const DataTypes& arguments) {
+        DCHECK(is_map(arguments[0])) << arguments[0]->get_name() << " not supported";
+        DataTypes fieldTypes(2);
+        fieldTypes[0] = check_and_get_data_type<DataTypeMap>(arguments[0].get())->get_key_type();
+        fieldTypes[1] = check_and_get_data_type<DataTypeMap>(arguments[0].get())->get_value_type();
+        return make_nullable(std::make_shared<vectorized::DataTypeStruct>(fieldTypes));
+    }
+    static std::string get_error_msg() { return "Fake function do not support execute"; }
+};
+
+struct FunctionEsquery {
+    static DataTypePtr get_return_type_impl(const DataTypes& arguments) {
+        return FunctionFakeBaseImpl<DataTypeUInt8>::get_return_type_impl(arguments);
+    }
+    static std::string get_error_msg() { return "esquery only supported on es table"; }
+};
+
+template <typename FunctionImpl>
+void register_function(SimpleFunctionFactory& factory, const std::string& name) {
+    factory.register_function<FunctionFake<FunctionImpl>>(name);
 };
 
 template <typename FunctionImpl>
@@ -74,15 +108,18 @@ void register_table_function_expand_outer_default(SimpleFunctionFactory& factory
 };
 
 void register_function_fake(SimpleFunctionFactory& factory) {
-    register_function_default<DataTypeUInt8>(factory, "esquery");
+    register_function<FunctionEsquery>(factory, "esquery");
 
     register_table_function_expand_outer<FunctionExplode>(factory, "explode");
+    register_table_function_expand_outer<FunctionExplodeMap>(factory, "explode_map");
 
     register_table_function_expand_outer_default<DataTypeString>(factory, "explode_split");
     register_table_function_expand_outer_default<DataTypeInt32>(factory, "explode_numbers");
     register_table_function_expand_outer_default<DataTypeInt64>(factory, "explode_json_array_int");
     register_table_function_expand_outer_default<DataTypeString>(factory,
                                                                  "explode_json_array_string");
+    register_table_function_expand_outer_default<DataTypeString>(factory,
+                                                                 "explode_json_array_json");
     register_table_function_expand_outer_default<DataTypeFloat64>(factory,
                                                                   "explode_json_array_double");
     register_table_function_expand_outer_default<DataTypeInt64>(factory, "explode_bitmap");

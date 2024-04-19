@@ -19,6 +19,8 @@ package org.apache.doris.planner;
 
 import org.apache.doris.analysis.Analyzer;
 import org.apache.doris.analysis.BinaryPredicate;
+import org.apache.doris.analysis.BitmapFilterPredicate;
+import org.apache.doris.analysis.CastExpr;
 import org.apache.doris.analysis.Expr;
 import org.apache.doris.analysis.Predicate;
 import org.apache.doris.analysis.SlotId;
@@ -26,16 +28,20 @@ import org.apache.doris.analysis.SlotRef;
 import org.apache.doris.analysis.TupleDescriptor;
 import org.apache.doris.analysis.TupleId;
 import org.apache.doris.analysis.TupleIsNullPredicate;
-import org.apache.doris.catalog.PrimitiveType;
 import org.apache.doris.catalog.ScalarType;
+import org.apache.doris.catalog.Type;
 import org.apache.doris.common.FeConstants;
 import org.apache.doris.common.IdGenerator;
+import org.apache.doris.common.Pair;
 import org.apache.doris.qe.ConnectContext;
+import org.apache.doris.qe.SessionVariable;
+import org.apache.doris.thrift.TMinMaxRuntimeFilterType;
 import org.apache.doris.thrift.TRuntimeFilterDesc;
 import org.apache.doris.thrift.TRuntimeFilterType;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -62,18 +68,18 @@ public final class RuntimeFilter {
     // Identifier of the filter (unique within a query)
     private final RuntimeFilterId id;
     // Join node that builds the filter
-    private final HashJoinNode builderNode;
+    private final PlanNode builderNode;
     // Expr (rhs of join predicate) on which the filter is built
     private final Expr srcExpr;
     // The position of expr in the join condition
     private final int exprOrder;
     // Expr (lhs of join predicate) from which the targetExprs_ are generated.
-    private final Expr origTargetExpr;
+    private final List<Expr> origTargetExprs;
     // Runtime filter targets
     private final List<RuntimeFilterTarget> targets = new ArrayList<>();
     // Slots from base table tuples that have value transfer from the slots
     // of 'origTargetExpr'. The slots are grouped by tuple id.
-    private final Map<TupleId, List<SlotId>> targetSlotsByTid;
+    private final List<Map<TupleId, List<SlotId>>> targetSlotsByTid;
     // If true, the join node building this filter is executed using a broadcast join;
     // set in the DistributedPlanner.createHashJoinFragment()
     private boolean isBroadcastJoin;
@@ -84,6 +90,8 @@ public final class RuntimeFilter {
     private long ndvEstimate = -1;
     // Size of the filter (in Bytes). Should be greater than zero for bloom filters.
     private long filterSizeBytes = 0;
+
+    private long expectFilterSizeBytes = 0;
     // If true, the filter is produced by a broadcast join and there is at least one
     // destination scan node which is in the same fragment as the join; set in
     // DistributedPlanner.createHashJoinFragment().
@@ -97,6 +105,12 @@ public final class RuntimeFilter {
     private boolean finalized = false;
     // The type of filter to build.
     private TRuntimeFilterType runtimeFilterType;
+
+    private boolean bitmapFilterNotIn = false;
+
+    private TMinMaxRuntimeFilterType tMinMaxRuntimeFilterType;
+
+    private boolean bloomFilterSizeCalculatedByNdv = false;
 
     /**
      * Internal representation of a runtime filter target.
@@ -113,7 +127,8 @@ public final class RuntimeFilter {
 
         public RuntimeFilterTarget(ScanNode targetNode, Expr targetExpr,
                                    boolean isBoundByKeyColumns, boolean isLocalTarget) {
-            Preconditions.checkState(targetExpr.isBoundByTupleIds(targetNode.getTupleIds()));
+            Preconditions.checkState(targetExpr.isBoundByTupleIds(targetNode.getTupleIds())
+                    || targetNode instanceof CTEScanNode);
             this.node = targetNode;
             this.expr = targetExpr;
             this.isBoundByKeyColumns = isBoundByKeyColumns;
@@ -129,18 +144,40 @@ public final class RuntimeFilter {
         }
     }
 
-    private RuntimeFilter(RuntimeFilterId filterId, HashJoinNode filterSrcNode, Expr srcExpr, int exprOrder,
-                          Expr origTargetExpr, Map<TupleId, List<SlotId>> targetSlots,
-                          TRuntimeFilterType type, RuntimeFilterGenerator.FilterSizeLimits filterSizeLimits) {
+    private RuntimeFilter(RuntimeFilterId filterId, PlanNode filterSrcNode, Expr srcExpr, int exprOrder,
+                          List<Expr> origTargetExprs, List<Map<TupleId, List<SlotId>>> targetSlots,
+                          TRuntimeFilterType type,
+                          RuntimeFilterGenerator.FilterSizeLimits filterSizeLimits, long buildSizeNdv,
+                          TMinMaxRuntimeFilterType tMinMaxRuntimeFilterType) {
         this.id = filterId;
         this.builderNode = filterSrcNode;
         this.srcExpr = srcExpr;
         this.exprOrder = exprOrder;
-        this.origTargetExpr = origTargetExpr;
-        this.targetSlotsByTid = targetSlots;
+        this.origTargetExprs = ImmutableList.copyOf(origTargetExprs);
+        this.targetSlotsByTid = ImmutableList.copyOf(targetSlots);
         this.runtimeFilterType = type;
+        this.ndvEstimate = buildSizeNdv;
+        this.tMinMaxRuntimeFilterType = tMinMaxRuntimeFilterType;
         computeNdvEstimate();
         calculateFilterSize(filterSizeLimits);
+    }
+
+    private RuntimeFilter(RuntimeFilterId filterId, PlanNode filterSrcNode, Expr srcExpr, int exprOrder,
+            List<Expr> origTargetExprs, List<Map<TupleId, List<SlotId>>> targetSlots, TRuntimeFilterType type,
+            RuntimeFilterGenerator.FilterSizeLimits filterSizeLimits, long buildSizeNdv) {
+        this(filterId, filterSrcNode, srcExpr, exprOrder, origTargetExprs,
+                targetSlots, type, filterSizeLimits, buildSizeNdv, TMinMaxRuntimeFilterType.MIN_MAX);
+    }
+
+    // only for nereids planner
+    public static RuntimeFilter fromNereidsRuntimeFilter(
+            org.apache.doris.nereids.trees.plans.physical.RuntimeFilter nereidsFilter,
+            JoinNodeBase node, Expr srcExpr, List<Expr> origTargetExprs,
+            List<Map<TupleId, List<SlotId>>> targetSlots,
+            RuntimeFilterGenerator.FilterSizeLimits filterSizeLimits) {
+        return new RuntimeFilter(nereidsFilter.getId(), node, srcExpr, nereidsFilter.getExprOrder(), origTargetExprs,
+                targetSlots, nereidsFilter.getType(), filterSizeLimits, nereidsFilter.getBuildSideNdv(),
+                nereidsFilter.gettMinMaxType());
     }
 
     @Override
@@ -164,6 +201,10 @@ public final class RuntimeFilter {
         return finalized;
     }
 
+    public void setBitmapFilterNotIn(boolean bitmapFilterNotIn) {
+        this.bitmapFilterNotIn = bitmapFilterNotIn;
+    }
+
     /**
      * Serializes a runtime filter to Thrift.
      */
@@ -180,6 +221,28 @@ public final class RuntimeFilter {
         }
         tFilter.setType(runtimeFilterType);
         tFilter.setBloomFilterSizeBytes(filterSizeBytes);
+        if (runtimeFilterType.equals(TRuntimeFilterType.BITMAP)) {
+            tFilter.setBitmapTargetExpr(targets.get(0).expr.treeToThrift());
+            tFilter.setBitmapFilterNotIn(bitmapFilterNotIn);
+        }
+        if (runtimeFilterType.equals(TRuntimeFilterType.MIN_MAX)) {
+            tFilter.setMinMaxType(tMinMaxRuntimeFilterType);
+        }
+        tFilter.setOptRemoteRf(hasRemoteTargets);
+        tFilter.setBloomFilterSizeCalculatedByNdv(bloomFilterSizeCalculatedByNdv);
+        if (builderNode instanceof HashJoinNode) {
+            HashJoinNode join = (HashJoinNode) builderNode;
+            BinaryPredicate eq = join.getEqJoinConjuncts().get(exprOrder);
+            if (eq.getOp().equals(BinaryPredicate.Operator.EQ_FOR_NULL)) {
+                tFilter.setNullAware(true);
+            } else {
+                tFilter.setNullAware(false);
+            }
+        }
+        tFilter.setSyncFilterSize(
+                ConnectContext.get() != null && ConnectContext.get().getSessionVariable().getEnablePipelineXEngine()
+                        && ConnectContext.get().getSessionVariable().getEnablePipelineEngine()
+                        && ConnectContext.get().getSessionVariable().enableSyncRuntimeFilterSize());
         return tFilter;
     }
 
@@ -195,11 +258,11 @@ public final class RuntimeFilter {
         return srcExpr;
     }
 
-    public Expr getOrigTargetExpr() {
-        return origTargetExpr;
+    public List<Expr> getOrigTargetExprs() {
+        return origTargetExprs;
     }
 
-    public Map<TupleId, List<SlotId>> getTargetSlots() {
+    public List<Map<TupleId, List<SlotId>>> getTargetSlots() {
         return targetSlotsByTid;
     }
 
@@ -211,6 +274,18 @@ public final class RuntimeFilter {
         return runtimeFilterType;
     }
 
+    public String getTypeDesc() {
+        String desc = runtimeFilterType.toString().toLowerCase();
+        if (runtimeFilterType == TRuntimeFilterType.MIN_MAX) {
+            if (tMinMaxRuntimeFilterType == TMinMaxRuntimeFilterType.MIN) {
+                desc = "min";
+            } else if (tMinMaxRuntimeFilterType == TMinMaxRuntimeFilterType.MAX) {
+                desc = "max";
+            }
+        }
+        return desc;
+    }
+
     public void setType(TRuntimeFilterType type) {
         runtimeFilterType = type;
     }
@@ -219,7 +294,7 @@ public final class RuntimeFilter {
         return hasRemoteTargets;
     }
 
-    public HashJoinNode getBuilderNode() {
+    public PlanNode getBuilderNode() {
         return builderNode;
     }
 
@@ -257,12 +332,13 @@ public final class RuntimeFilter {
                 TupleIsNullPredicate.unwrapExpr(normalizedJoinConjunct.getChild(0).clone());
         Expr srcExpr = normalizedJoinConjunct.getChild(1);
 
-        if (srcExpr.getType().equals(ScalarType.createHllType())
-                || srcExpr.getType().equals(ScalarType.createType(PrimitiveType.BITMAP))) {
+        Type srcType = srcExpr.getType();
+        if (srcType.equals(ScalarType.HLL) || srcType.equals(ScalarType.BITMAP) || srcType.equals(ScalarType.BOOLEAN)) {
             return null;
         }
 
-        Map<TupleId, List<SlotId>> targetSlots = getTargetSlots(analyzer, targetExpr);
+        targetExpr = targetExpr.getRealSlotRef();
+        Map<TupleId, List<SlotId>> targetSlots = getTargetSlots(analyzer, targetExpr, filterSrcNode.getChild(0));
         Preconditions.checkNotNull(targetSlots);
         if (targetSlots.isEmpty()) {
             return null;
@@ -271,7 +347,7 @@ public final class RuntimeFilter {
         if (LOG.isTraceEnabled()) {
             LOG.trace("Generating runtime filter from predicate " + joinPredicate);
         }
-        if (ConnectContext.get().getSessionVariable().enableRemoveNoConjunctsRuntimeFilterPolicy) {
+        if (ConnectContext.get().getSessionVariable().isEnableRuntimeFilterPrune()) {
             if (srcExpr instanceof SlotRef) {
                 if (!tupleHasConjuncts.contains(((SlotRef) srcExpr).getDesc().getParent().getId())) {
                     // src tuple has no conjunct, don't create runtime filter
@@ -286,7 +362,49 @@ public final class RuntimeFilter {
         }
 
         return new RuntimeFilter(idGen.getNextId(), filterSrcNode, srcExpr, exprOrder,
-                targetExpr, targetSlots, type, filterSizeLimits);
+                ImmutableList.of(targetExpr), ImmutableList.of(targetSlots), type, filterSizeLimits, -1L);
+    }
+
+    public static RuntimeFilter create(IdGenerator<RuntimeFilterId> idGen, Analyzer analyzer, Expr joinPredicate,
+            int exprOrder, NestedLoopJoinNode filterSrcNode, TRuntimeFilterType type,
+            RuntimeFilterGenerator.FilterSizeLimits filterSizeLimits) {
+        Preconditions.checkNotNull(idGen);
+        Preconditions.checkNotNull(joinPredicate);
+        Preconditions.checkNotNull(filterSrcNode);
+
+        if (type.equals(TRuntimeFilterType.BITMAP)) {
+            if (!(joinPredicate instanceof BitmapFilterPredicate)) {
+                return null;
+            }
+
+            Expr targetExpr = Expr.getFirstBoundChild(joinPredicate, filterSrcNode.getChild(0).getTupleIds());
+            Expr srcExpr = Expr.getFirstBoundChild(joinPredicate, filterSrcNode.getChild(1).getTupleIds());
+            if (targetExpr == null || srcExpr == null) {
+                return null;
+            }
+
+            Type srcType = srcExpr.getType();
+            if (!srcType.equals(ScalarType.BITMAP)) {
+                return null;
+            }
+
+            Map<TupleId, List<SlotId>> targetSlots = getTargetSlots(analyzer, targetExpr, filterSrcNode.getChild(0));
+            Preconditions.checkNotNull(targetSlots);
+            if (targetSlots.isEmpty()) {
+                return null;
+            }
+            while (targetExpr instanceof CastExpr && targetExpr.getChild(0).getType().isIntegerType()) {
+                targetExpr = targetExpr.getChild(0);
+            }
+
+            RuntimeFilter runtimeFilter =
+                    new RuntimeFilter(idGen.getNextId(), filterSrcNode, srcExpr, exprOrder,
+                            ImmutableList.of(targetExpr), ImmutableList.of(targetSlots),
+                            type, filterSizeLimits, -1L);
+            runtimeFilter.setBitmapFilterNotIn(((BitmapFilterPredicate) joinPredicate).isNotIn());
+            return runtimeFilter;
+        }
+        return null;
     }
 
     /**
@@ -297,7 +415,7 @@ public final class RuntimeFilter {
      * or if applying the filter might lead to incorrect results.
      * Returns the slot id of the base table expected to use this target expr.
      */
-    private static Map<TupleId, List<SlotId>> getTargetSlots(Analyzer analyzer, Expr expr) {
+    private static Map<TupleId, List<SlotId>> getTargetSlots(Analyzer analyzer, Expr expr, PlanNode root) {
         // 'expr' is not a SlotRef and may contain multiple SlotRefs
         List<TupleId> tids = new ArrayList<>();
         List<SlotId> sids = new ArrayList<>();
@@ -399,7 +517,39 @@ public final class RuntimeFilter {
                 return Collections.emptyMap();
             }
         }
-        return slotsByTid;
+
+        // rf shouldn't push down through any analytic node
+        // remove the slots if there is any analytic node in the middle
+        Map<TupleId, List<SlotId>> result = new HashMap<>();
+        for (Map.Entry<TupleId, List<SlotId>> entry : slotsByTid.entrySet()) {
+            Pair<Boolean, Boolean> isValid =
+                    hasAnalyticNodeInSearchPath(entry.getKey(), root, false);
+            if (isValid.first && !isValid.second) {
+                result.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return result;
+    }
+
+    /**
+     * deep first search the child having the corresponding tupleId
+     * and record if meets any analytic node during the search
+     * Returns Pair.first -> find a child's tupleId is id, Pair.second -> if met any analytic node during the search
+     */
+    private static Pair<Boolean, Boolean> hasAnalyticNodeInSearchPath(TupleId id, PlanNode parent,
+            boolean hasAnalyticParent) {
+        if (parent.getTupleIds().contains(id)) {
+            return Pair.of(true, hasAnalyticParent);
+        } else {
+            for (PlanNode child : parent.getChildren()) {
+                Pair<Boolean, Boolean> result = hasAnalyticNodeInSearchPath(id, child,
+                        hasAnalyticParent || parent instanceof AnalyticEvalNode);
+                if (result.first) {
+                    return result;
+                }
+            }
+        }
+        return Pair.of(false, false);
     }
 
     /**
@@ -453,8 +603,14 @@ public final class RuntimeFilter {
         isBroadcastJoin = isBroadcast;
     }
 
+    public boolean isBroadcast() {
+        return isBroadcastJoin;
+    }
+
     public void computeNdvEstimate() {
-        ndvEstimate = builderNode.getChild(1).getCardinality();
+        if (ndvEstimate < 0) {
+            ndvEstimate = builderNode.getChild(1).getCardinalityAfterFilter();
+        }
     }
 
     public void extractTargetsPosition() {
@@ -475,16 +631,26 @@ public final class RuntimeFilter {
      * Considering that the `IN` filter may be converted to the `Bloom FIlter` when crossing fragments,
      * the bloom filter size is always calculated.
      */
-    private void calculateFilterSize(RuntimeFilterGenerator.FilterSizeLimits filterSizeLimits) {
+    public void calculateFilterSize(RuntimeFilterGenerator.FilterSizeLimits filterSizeLimits) {
         if (ndvEstimate == -1) {
             filterSizeBytes = filterSizeLimits.defaultVal;
             return;
         }
-        double fpp = FeConstants.default_bloom_filter_fpp;
-        int logFilterSize = getMinLogSpaceForBloomFilter(ndvEstimate, fpp);
-        filterSizeBytes = 1L << logFilterSize;
+        SessionVariable sessionVariable = ConnectContext.get().getSessionVariable();
+        if (sessionVariable.useRuntimeFilterDefaultSize) {
+            filterSizeBytes = filterSizeLimits.defaultVal;
+            return;
+        }
+        filterSizeBytes = expectRuntimeFilterSize(ndvEstimate);
+        expectFilterSizeBytes = filterSizeBytes;
         filterSizeBytes = Math.max(filterSizeBytes, filterSizeLimits.minVal);
         filterSizeBytes = Math.min(filterSizeBytes, filterSizeLimits.maxVal);
+    }
+
+    public static long expectRuntimeFilterSize(long ndv) {
+        double fpp = FeConstants.default_bloom_filter_fpp;
+        int logFilterSize = getMinLogSpaceForBloomFilter(ndv, fpp);
+        return 1L << logFilterSize;
     }
 
     /**
@@ -508,7 +674,7 @@ public final class RuntimeFilter {
      * Assigns this runtime filter to the corresponding plan nodes.
      */
     public void assignToPlanNodes() {
-        Preconditions.checkState(hasTargets());
+        Preconditions.checkState(hasTargets(), this.toString() + " has no target");
         builderNode.addRuntimeFilter(this);
         builderNode.fragment.setBuilderRuntimeFilterIds(getFilterId());
         for (RuntimeFilterTarget target : targets) {
@@ -519,12 +685,25 @@ public final class RuntimeFilter {
     }
 
     public void registerToPlan(Analyzer analyzer) {
-        setIsBroadcast(getBuilderNode().getDistributionMode() == HashJoinNode.DistributionMode.BROADCAST);
+        PlanNode node = getBuilderNode();
+        if (node instanceof HashJoinNode) {
+            setIsBroadcast(((HashJoinNode) node).getDistributionMode() == HashJoinNode.DistributionMode.BROADCAST);
+        } else {
+            setIsBroadcast(true);
+        }
         if (LOG.isTraceEnabled()) {
             LOG.trace("Runtime filter: " + debugString());
         }
         assignToPlanNodes();
         analyzer.putAssignedRuntimeFilter(this);
+    }
+
+    public long getFilterSizeBytes() {
+        return filterSizeBytes;
+    }
+
+    public long getEstimateNdv() {
+        return ndvEstimate;
     }
 
     public String debugString() {
@@ -534,5 +713,40 @@ public final class RuntimeFilter {
                 +      "Target(s): "
                 +      Joiner.on(", ").join(targets) + " "
                 + "Selectivity: " + getSelectivity();
+    }
+
+
+    public long getExpectFilterSizeBytes() {
+        return expectFilterSizeBytes;
+    }
+
+    public String getExplainString(boolean isBuildNode, boolean isBrief, PlanNodeId targetNodeId) {
+        StringBuilder filterStr = new StringBuilder();
+        filterStr.append(getFilterId());
+        if (!isBrief) {
+            filterStr.append("[");
+            filterStr.append(getTypeDesc());
+            filterStr.append("]");
+            if (isBuildNode) {
+                filterStr.append(" <- ");
+                filterStr.append(getSrcExpr().toSql());
+                filterStr.append("(").append(getEstimateNdv()).append("/")
+                        .append(getExpectFilterSizeBytes()).append("/")
+                        .append(getFilterSizeBytes()).append(")");
+            } else {
+                filterStr.append(" -> ");
+                filterStr.append(getTargetExpr(targetNodeId).toSql());
+            }
+        }
+        return filterStr.toString();
+    }
+
+
+    public boolean isBloomFilterSizeCalculatedByNdv() {
+        return bloomFilterSizeCalculatedByNdv;
+    }
+
+    public void setBloomFilterSizeCalculatedByNdv(boolean bloomFilterSizeCalculatedByNdv) {
+        this.bloomFilterSizeCalculatedByNdv = bloomFilterSizeCalculatedByNdv;
     }
 }

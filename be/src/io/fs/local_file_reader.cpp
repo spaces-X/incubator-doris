@@ -17,10 +17,25 @@
 
 #include "io/fs/local_file_reader.h"
 
-#include <atomic>
+#include <bthread/bthread.h>
+// IWYU pragma: no_include <bthread/errno.h>
+#include <bvar/bvar.h>
+#include <errno.h> // IWYU pragma: keep
+#include <fmt/format.h>
+#include <glog/logging.h>
+#include <unistd.h>
 
+#include <algorithm>
+#include <atomic>
+#include <cstring>
+#include <string>
+#include <utility>
+
+#include "common/compiler_util.h" // IWYU pragma: keep
+#include "common/sync_point.h"
+#include "io/fs/err_utils.h"
+#include "util/async_io.h"
 #include "util/doris_metrics.h"
-#include "util/errno.h"
 
 namespace doris {
 namespace io {
@@ -39,20 +54,28 @@ Status LocalFileReader::close() {
     bool expected = false;
     if (_closed.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
         DorisMetrics::instance()->local_file_open_reading->increment(-1);
-        auto res = ::close(_fd);
-        if (-1 == res) {
-            return Status::IOError("failed to close {}: {}", _path.native(), std::strerror(errno));
+        DCHECK(bthread_self() == 0);
+        if (-1 == ::close(_fd)) {
+            std::string err = errno_to_str();
+            return localfs_error(errno, fmt::format("failed to close {}", _path.native()));
         }
         _fd = -1;
     }
     return Status::OK();
 }
 
-Status LocalFileReader::read_at(size_t offset, Slice result, size_t* bytes_read) {
-    DCHECK(!closed());
+Status LocalFileReader::read_at_impl(size_t offset, Slice result, size_t* bytes_read,
+                                     const IOContext* /*io_ctx*/) {
+    TEST_SYNC_POINT_RETURN_WITH_VALUE("LocalFileReader::read_at_impl",
+                                      Status::IOError("inject io error"));
+    if (closed()) [[unlikely]] {
+        return Status::InternalError("read closed file: ", _path.native());
+    }
+
     if (offset > _file_size) {
-        return Status::IOError("offset exceeds file size(offset: {}, file size: {}, path: {})",
-                               offset, _file_size, _path.native());
+        return Status::InternalError(
+                "offset exceeds file size(offset: {}, file size: {}, path: {})", offset, _file_size,
+                _path.native());
     }
     size_t bytes_req = result.size;
     char* to = result.data;
@@ -60,12 +83,13 @@ Status LocalFileReader::read_at(size_t offset, Slice result, size_t* bytes_read)
     *bytes_read = 0;
 
     while (bytes_req != 0) {
-        auto res = ::pread(_fd, to, bytes_req, offset);
+        auto res = SYNC_POINT_HOOK_RETURN_VALUE(::pread(_fd, to, bytes_req, offset),
+                                                "LocalFileReader::pread", _fd, to);
         if (UNLIKELY(-1 == res && errno != EINTR)) {
-            return Status::IOError("cannot read from {}: {}", _path.native(), std::strerror(errno));
+            return localfs_error(errno, fmt::format("failed to read {}", _path.native()));
         }
         if (UNLIKELY(res == 0)) {
-            return Status::IOError("cannot read from {}: unexpected EOF", _path.native());
+            return Status::InternalError("cannot read from {}: unexpected EOF", _path.native());
         }
         if (res > 0) {
             to += res;

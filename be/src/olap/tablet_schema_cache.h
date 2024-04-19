@@ -17,45 +17,39 @@
 
 #pragma once
 
-#include <gen_cpp/olap_file.pb.h>
-
-#include <memory>
-#include <mutex>
-#include <unordered_map>
-
-#include "olap/tablet_schema.h"
+#include "olap/tablet_fwd.h"
+#include "runtime/exec_env.h"
+#include "runtime/memory/lru_cache_policy.h"
 
 namespace doris {
 
-class TabletSchemaCache {
+class TabletSchemaCache : public LRUCachePolicy {
 public:
-    static void create_global_schema_cache() {
-        DCHECK(_s_instance == nullptr);
-        static TabletSchemaCache instance;
-        _s_instance = &instance;
+    TabletSchemaCache(size_t capacity)
+            : LRUCachePolicy(CachePolicy::CacheType::TABLET_SCHEMA_CACHE, capacity,
+                             LRUCacheType::NUMBER, config::tablet_schema_cache_recycle_interval) {}
+
+    static TabletSchemaCache* create_global_schema_cache(size_t capacity) {
+        auto* res = new TabletSchemaCache(capacity);
+        return res;
     }
 
-    static TabletSchemaCache* instance() { return _s_instance; }
-
-    TabletSchemaSPtr insert(const std::string& key) {
-        DCHECK(_s_instance != nullptr);
-        std::lock_guard guard(_mtx);
-        auto iter = _cache.find(key);
-        if (iter == _cache.end()) {
-            TabletSchemaSPtr tablet_schema_ptr = std::make_shared<TabletSchema>();
-            TabletSchemaPB pb;
-            pb.ParseFromString(key);
-            tablet_schema_ptr->init_from_pb(pb);
-            _cache[key] = tablet_schema_ptr;
-            return tablet_schema_ptr;
-        }
-        return iter->second;
+    static TabletSchemaCache* instance() {
+        return ExecEnv::GetInstance()->get_tablet_schema_cache();
     }
+
+    std::pair<Cache::Handle*, TabletSchemaSPtr> insert(const std::string& key);
+
+    void release(Cache::Handle*);
 
 private:
-    static inline TabletSchemaCache* _s_instance = nullptr;
-    std::mutex _mtx;
-    std::unordered_map<std::string, TabletSchemaSPtr> _cache;
+    class CacheValue : public LRUCacheValueBase {
+    public:
+        CacheValue() : LRUCacheValueBase(CachePolicy::CacheType::TABLET_SCHEMA_CACHE) {}
+        ~CacheValue() override;
+
+        TabletSchemaSPtr tablet_schema;
+    };
 };
 
 } // namespace doris

@@ -38,7 +38,7 @@ import java.util.List;
 import java.util.Map;
 
 public class MysqlTable extends Table {
-    private static final Logger LOG = LogManager.getLogger(OlapTable.class);
+    private static final Logger LOG = LogManager.getLogger(MysqlTable.class);
 
     private static final String ODBC_CATALOG_RESOURCE = "odbc_catalog_resource";
     private static final String MYSQL_HOST = "host";
@@ -84,7 +84,7 @@ public class MysqlTable extends Table {
             }
 
             // 2. check resource usage privilege
-            if (!Env.getCurrentEnv().getAuth().checkResourcePriv(ConnectContext.get(),
+            if (!Env.getCurrentEnv().getAccessManager().checkResourcePriv(ConnectContext.get(),
                     odbcCatalogResourceName,
                     PrivPredicate.USAGE)) {
                 throw new DdlException("USAGE denied to user '" + ConnectContext.get().getQualifiedUser()
@@ -233,7 +233,9 @@ public class MysqlTable extends Table {
         sb.append(mysqlTableName);
         sb.append(getCharset());
         String md5 = DigestUtils.md5Hex(sb.toString());
-        LOG.debug("get signature of mysql table {}: {}. signature string: {}", name, md5, sb.toString());
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("get signature of mysql table {}: {}. signature string: {}", name, md5, sb.toString());
+        }
         return md5;
     }
 

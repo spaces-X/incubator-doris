@@ -17,12 +17,10 @@
 
 suite("inpredicate") {
     sql """
-        SET enable_vectorized_engine=true
-    """
-
-    sql """
         SET enable_nereids_planner=true
     """
+
+    sql "SET enable_fallback_to_original_planner=false"
 
     order_qt_in_predicate_1 """
         SELECT * FROM supplier WHERE s_suppkey in (1, 2, 3);

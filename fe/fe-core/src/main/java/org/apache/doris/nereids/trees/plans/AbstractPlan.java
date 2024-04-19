@@ -19,43 +19,72 @@ package org.apache.doris.nereids.trees.plans;
 
 import org.apache.doris.nereids.analyzer.Unbound;
 import org.apache.doris.nereids.memo.GroupExpression;
+import org.apache.doris.nereids.properties.FunctionalDependencies;
 import org.apache.doris.nereids.properties.LogicalProperties;
+import org.apache.doris.nereids.properties.UnboundLogicalProperties;
 import org.apache.doris.nereids.trees.AbstractTreeNode;
+import org.apache.doris.nereids.trees.expressions.ExprId;
 import org.apache.doris.nereids.trees.expressions.Slot;
+import org.apache.doris.nereids.trees.expressions.StatementScopeIdGenerator;
+import org.apache.doris.nereids.trees.plans.TreeStringPlan.TreeStringNode;
+import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
+import org.apache.doris.nereids.util.MutableState;
 import org.apache.doris.nereids.util.TreeStringUtils;
-import org.apache.doris.statistics.StatsDeriveResult;
+import org.apache.doris.statistics.Statistics;
 
-import java.util.ArrayList;
+import com.google.common.base.Preconditions;
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import javax.annotation.Nullable;
 
 /**
  * Abstract class for all concrete plan node.
  */
 public abstract class AbstractPlan extends AbstractTreeNode<Plan> implements Plan {
+    public static final String FRAGMENT_ID = "fragment";
+    private static final ObjectId zeroId = new ObjectId(0);
+    protected final ObjectId id;
 
-    protected StatsDeriveResult statsDeriveResult;
+    protected final Statistics statistics;
     protected final PlanType type;
     protected final Optional<GroupExpression> groupExpression;
-    protected final LogicalProperties logicalProperties;
+    protected final Supplier<LogicalProperties> logicalPropertiesSupplier;
 
-    public AbstractPlan(PlanType type, Plan... children) {
-        this(type, Optional.empty(), Optional.empty(), children);
-    }
-
-    public AbstractPlan(PlanType type, Optional<LogicalProperties> optLogicalProperties, Plan... children) {
-        this(type, Optional.empty(), optLogicalProperties, children);
-    }
-
-    /** all parameter constructor. */
-    public AbstractPlan(PlanType type, Optional<GroupExpression> groupExpression,
-                        Optional<LogicalProperties> optLogicalProperties, Plan... children) {
-        super(groupExpression, children);
+    /**
+     * all parameter constructor.
+     */
+    protected AbstractPlan(PlanType type, Optional<GroupExpression> groupExpression,
+            Optional<LogicalProperties> optLogicalProperties, @Nullable Statistics statistics,
+            List<Plan> children) {
+        super(children);
         this.type = Objects.requireNonNull(type, "type can not be null");
         this.groupExpression = Objects.requireNonNull(groupExpression, "groupExpression can not be null");
-        LogicalProperties logicalProperties = optLogicalProperties.orElseGet(() -> computeLogicalProperties());
-        this.logicalProperties = Objects.requireNonNull(logicalProperties, "logicalProperties can not be null");
+        Objects.requireNonNull(optLogicalProperties, "logicalProperties can not be null");
+        this.logicalPropertiesSupplier = Suppliers.memoize(() ->
+                optLogicalProperties.orElseGet(this::computeLogicalProperties));
+        this.statistics = statistics;
+        this.id = StatementScopeIdGenerator.newObjectId();
+    }
+
+    protected AbstractPlan(PlanType type, Optional<GroupExpression> groupExpression,
+            Supplier<LogicalProperties> logicalPropertiesSupplier, @Nullable Statistics statistics,
+            List<Plan> children, boolean useZeroId) {
+        super(children);
+        this.type = Objects.requireNonNull(type, "type can not be null");
+        this.groupExpression = Objects.requireNonNull(groupExpression, "groupExpression can not be null");
+        this.logicalPropertiesSupplier = logicalPropertiesSupplier;
+        this.statistics = statistics;
+        Preconditions.checkArgument(useZeroId);
+        this.id = zeroId;
     }
 
     @Override
@@ -67,11 +96,21 @@ public abstract class AbstractPlan extends AbstractTreeNode<Plan> implements Pla
         return groupExpression;
     }
 
+    public Statistics getStats() {
+        return statistics;
+    }
+
     @Override
     public boolean canBind() {
-        return !bound()
-                && !(this instanceof Unbound)
-                && childrenBound();
+        if (bound()) {
+            return false;
+        }
+        for (Plan child : children()) {
+            if (!child.bound()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -83,59 +122,108 @@ public abstract class AbstractPlan extends AbstractTreeNode<Plan> implements Pla
     public String treeString() {
         return TreeStringUtils.treeString(this,
                 plan -> plan.toString(),
-                plan -> (List) ((Plan) plan).children());
+                plan -> {
+                    if (plan instanceof TreeStringPlan) {
+                        Optional<TreeStringNode> treeStringNode = ((TreeStringPlan) plan).parseTreeStringNode();
+                        return treeStringNode.isPresent() ? ImmutableList.of(treeStringNode.get()) : ImmutableList.of();
+                    }
+                    if (plan instanceof TreeStringNode) {
+                        return (List) ((TreeStringNode) plan).children;
+                    }
+                    if (!(plan instanceof Plan)) {
+                        return ImmutableList.of();
+                    }
+                    return (List) ((Plan) plan).children();
+                },
+                plan -> {
+                    if (!(plan instanceof Plan)) {
+                        return ImmutableList.of();
+                    }
+                    return (List) ((Plan) plan).extraPlans();
+                },
+                plan -> {
+                    if (!(plan instanceof Plan)) {
+                        return false;
+                    }
+                    return ((Plan) plan).displayExtraPlanFirst();
+                });
     }
 
-    private void treeString(List<String> lines, int depth, List<Boolean> lastChildren, Plan plan) {
-        StringBuilder sb = new StringBuilder();
-        if (depth > 0) {
-            if (lastChildren.size() > 1) {
-                for (int i = 0; i < lastChildren.size() - 1; i++) {
-                    sb.append(lastChildren.get(i) ? "   " : "|  ");
-                }
-            }
-            if (lastChildren.size() > 0) {
-                Boolean last = lastChildren.get(lastChildren.size() - 1);
-                sb.append(last ? "+--" : "|--");
-            }
+    /** top toJson method, can be override by specific operator */
+    public JSONObject toJson() {
+        JSONObject json = new JSONObject();
+        json.put("PlanType", getType().toString());
+        if (this.children().isEmpty()) {
+            return json;
         }
-        sb.append(plan.toString());
-        lines.add(sb.toString());
-
-        List<Plan> children = plan.children();
-        for (int i = 0; i < children.size(); i++) {
-            List<Boolean> newLasts = new ArrayList<>(lastChildren);
-            newLasts.add(i + 1 == children.size());
-            treeString(lines, depth + 1, newLasts, children.get(i));
+        JSONArray childrenJson = new JSONArray();
+        for (Plan child : children) {
+            childrenJson.put(((AbstractPlan) child).toJson());
         }
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
-        }
-        AbstractPlan that = (AbstractPlan) o;
-        return Objects.equals(statsDeriveResult, that.statsDeriveResult)
-                && Objects.equals(logicalProperties, that.logicalProperties);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(statsDeriveResult, logicalProperties);
+        json.put("children", childrenJson);
+        return json;
     }
 
     @Override
     public List<Slot> getOutput() {
-        return logicalProperties.getOutput();
+        return getLogicalProperties().getOutput();
     }
 
     @Override
-    public Plan child(int index) {
-        return super.child(index);
+    public Set<Slot> getOutputSet() {
+        return getLogicalProperties().getOutputSet();
     }
 
+    @Override
+    public Set<ExprId> getOutputExprIdSet() {
+        return getLogicalProperties().getOutputExprIdSet();
+    }
+
+    @Override
+    public LogicalProperties getLogicalProperties() {
+        // TODO: use bound()?
+        if (this instanceof Unbound) {
+            return UnboundLogicalProperties.INSTANCE;
+        }
+        return logicalPropertiesSupplier.get();
+    }
+
+    @Override
+    public LogicalProperties computeLogicalProperties() {
+        boolean hasUnboundChild = false;
+        for (Plan child : children) {
+            if (!child.bound()) {
+                hasUnboundChild = true;
+                break;
+            }
+        }
+
+        if (hasUnboundChild || hasUnboundExpression()) {
+            return UnboundLogicalProperties.INSTANCE;
+        } else {
+            Supplier<List<Slot>> outputSupplier = Suppliers.memoize(this::computeOutput);
+            Supplier<FunctionalDependencies> fdSupplier = () -> this instanceof LogicalPlan
+                    ? ((LogicalPlan) this).computeFuncDeps()
+                    : FunctionalDependencies.EMPTY_FUNC_DEPS;
+            return new LogicalProperties(outputSupplier, fdSupplier);
+        }
+    }
+
+    public int getId() {
+        return id.asInt();
+    }
+
+    /**
+     * ancestors in the tree
+     */
+    public List<Plan> getAncestors() {
+        List<Plan> ancestors = Lists.newArrayList();
+        ancestors.add(this);
+        Optional<Object> parent = this.getMutableState(MutableState.KEY_PARENT);
+        while (parent.isPresent()) {
+            ancestors.add((Plan) parent.get());
+            parent = ((Plan) parent.get()).getMutableState(MutableState.KEY_PARENT);
+        }
+        return ancestors;
+    }
 }

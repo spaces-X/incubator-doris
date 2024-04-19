@@ -17,12 +17,20 @@
 
 package org.apache.doris.nereids.glue;
 
+import org.apache.doris.analysis.ExplainOptions;
 import org.apache.doris.analysis.Expr;
 import org.apache.doris.analysis.OutFileClause;
 import org.apache.doris.analysis.Queriable;
 import org.apache.doris.analysis.RedirectStatus;
 import org.apache.doris.analysis.StatementBase;
+import org.apache.doris.nereids.StatementContext;
+import org.apache.doris.nereids.exceptions.AnalysisException;
+import org.apache.doris.nereids.trees.plans.Plan;
+import org.apache.doris.nereids.trees.plans.commands.ExplainCommand;
+import org.apache.doris.nereids.trees.plans.logical.LogicalFileSink;
 import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
+
+import com.google.common.collect.Lists;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,12 +42,15 @@ import java.util.List;
  */
 public class LogicalPlanAdapter extends StatementBase implements Queriable {
 
+    private final StatementContext statementContext;
     private final LogicalPlan logicalPlan;
     private List<Expr> resultExprs;
     private ArrayList<String> colLabels;
+    private List<String> viewDdlSqls;
 
-    public LogicalPlanAdapter(LogicalPlan logicalPlan) {
+    public LogicalPlanAdapter(LogicalPlan logicalPlan, StatementContext statementContext) {
         this.logicalPlan = logicalPlan;
+        this.statementContext = statementContext;
     }
 
     @Override
@@ -53,21 +64,49 @@ public class LogicalPlanAdapter extends StatementBase implements Queriable {
 
     @Override
     public boolean hasOutFileClause() {
-        return false;
+        return logicalPlan instanceof LogicalFileSink;
     }
 
     @Override
     public OutFileClause getOutFileClause() {
+        if (logicalPlan instanceof LogicalFileSink) {
+            LogicalFileSink fileSink = (LogicalFileSink) logicalPlan;
+            OutFileClause outFile = new OutFileClause(
+                    fileSink.getFilePath(),
+                    fileSink.getFormat(),
+                    fileSink.getProperties()
+            );
+            try {
+                outFile.analyze(null, Lists.newArrayList(), Lists.newArrayList());
+            } catch (Exception e) {
+                throw new AnalysisException(e.getMessage(), e.getCause());
+            }
+            return outFile;
+        }
         return null;
+    }
+
+    @Override
+    public ExplainOptions getExplainOptions() {
+        if (logicalPlan instanceof ExplainCommand) {
+            ExplainCommand explain = (ExplainCommand) logicalPlan;
+            return new ExplainOptions(explain.getLevel(), explain.showPlanProcess());
+        } else {
+            return super.getExplainOptions();
+        }
+    }
+
+    public ArrayList<String> getColLabels() {
+        return colLabels;
+    }
+
+    public List<String> getViewDdlSqls() {
+        return viewDdlSqls;
     }
 
     @Override
     public List<Expr> getResultExprs() {
         return resultExprs;
-    }
-
-    public ArrayList<String> getColLabels() {
-        return colLabels;
     }
 
     public void setResultExprs(List<Expr> resultExprs) {
@@ -78,8 +117,20 @@ public class LogicalPlanAdapter extends StatementBase implements Queriable {
         this.colLabels = colLabels;
     }
 
+    public void setViewDdlSqls(List<String> viewDdlSqls) {
+        this.viewDdlSqls = viewDdlSqls;
+    }
+
+    public StatementContext getStatementContext() {
+        return statementContext;
+    }
+
     public String toDigest() {
         // TODO: generate real digest
         return "";
+    }
+
+    public static LogicalPlanAdapter of(Plan plan) {
+        return new LogicalPlanAdapter((LogicalPlan) plan, null);
     }
 }

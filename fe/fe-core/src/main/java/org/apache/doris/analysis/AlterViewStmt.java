@@ -59,11 +59,11 @@ public class AlterViewStmt extends BaseViewStmt {
                     String.format("ALTER VIEW not allowed on a table:%s.%s", getDbName(), getTable()));
         }
 
-        if (!Env.getCurrentEnv().getAuth()
-                .checkTblPriv(ConnectContext.get(), tableName.getDb(), tableName.getTbl(), PrivPredicate.ALTER)) {
-            ErrorReport.reportAnalysisException(ErrorCode.ERR_TABLEACCESS_DENIED_ERROR, "ALTER VIEW",
-                    ConnectContext.get().getQualifiedUser(), ConnectContext.get().getRemoteIP(),
-                    tableName.getDb() + ": " + tableName.getTbl());
+        if (!Env.getCurrentEnv().getAccessManager()
+                .checkTblPriv(ConnectContext.get(), tableName.getCtl(), tableName.getDb(), tableName.getTbl(),
+                        PrivPredicate.ALTER)) {
+            ErrorReport.reportAnalysisException(ErrorCode.ERR_TABLE_ACCESS_DENIED_ERROR,
+                    PrivPredicate.ALTER.getPrivs().toString(), tableName.getTbl());
         }
 
         if (cols != null) {
@@ -73,7 +73,7 @@ public class AlterViewStmt extends BaseViewStmt {
         viewDefStmt.setNeedToSql(true);
         Analyzer viewAnalyzer = new Analyzer(analyzer);
         viewDefStmt.analyze(viewAnalyzer);
-
+        checkQueryAuth();
         createColumnAndViewDefs(analyzer);
     }
 

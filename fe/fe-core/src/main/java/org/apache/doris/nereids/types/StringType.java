@@ -25,10 +25,15 @@ import org.apache.doris.nereids.types.coercion.CharacterType;
  */
 public class StringType extends CharacterType {
 
-    public static StringType INSTANCE = new StringType();
+    public static final StringType INSTANCE = new StringType();
 
     private StringType() {
         super(-1);
+    }
+
+    @Override
+    public int width() {
+        return len;
     }
 
     @Override
@@ -37,13 +42,8 @@ public class StringType extends CharacterType {
     }
 
     @Override
-    public boolean acceptsType(DataType other) {
-        return other instanceof StringType;
-    }
-
-    @Override
     public String simpleString() {
-        return "string";
+        return "text";
     }
 
     @Override

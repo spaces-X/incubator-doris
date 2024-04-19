@@ -17,9 +17,12 @@
 
 package org.apache.doris.nereids.trees.plans.logical;
 
+import org.apache.doris.nereids.properties.FdItem;
+import org.apache.doris.nereids.properties.FunctionalDependencies;
 import org.apache.doris.nereids.trees.plans.Plan;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 
 import java.util.Optional;
 import java.util.function.BiFunction;
@@ -50,4 +53,24 @@ public interface LogicalPlan extends Plan {
         return (LogicalPlan) withChildren(ImmutableList.copyOf(children()));
     }
 
+    /**
+     * Compute FunctionalDependencies for different plan
+     * Note: Unless you really know what you're doing, please use the following interface.
+     *   - BlockFDPropagation: clean the fd
+     *   - PropagateFD: propagate the fd
+     */
+    default FunctionalDependencies computeFuncDeps() {
+        FunctionalDependencies.Builder fdBuilder = new FunctionalDependencies.Builder();
+        computeUniform(fdBuilder);
+        computeUnique(fdBuilder);
+        ImmutableSet<FdItem> fdItems = computeFdItems();
+        fdBuilder.addFdItems(fdItems);
+        return fdBuilder.build();
+    }
+
+    ImmutableSet<FdItem> computeFdItems();
+
+    void computeUnique(FunctionalDependencies.Builder fdBuilder);
+
+    void computeUniform(FunctionalDependencies.Builder fdBuilder);
 }

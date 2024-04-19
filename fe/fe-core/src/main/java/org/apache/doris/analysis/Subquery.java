@@ -109,7 +109,9 @@ public class Subquery extends Expr {
         ArrayList<Expr> stmtResultExprs = stmt.getResultExprs();
         if (stmtResultExprs.size() == 1) {
             type = stmtResultExprs.get(0).getType();
-            Preconditions.checkState(!type.isComplexType());
+            if (type.isComplexType()) {
+                throw new AnalysisException("A subquery should not return Array/Map/Struct type: " + toSql());
+            }
         } else {
             type = createStructTypeFromExprList();
         }
@@ -170,7 +172,7 @@ public class Subquery extends Expr {
                 fieldName = "_" + Integer.toString(i);
             }
             Preconditions.checkNotNull(fieldName);
-            structFields.add(new StructField(fieldName, expr.getType(), null));
+            structFields.add(new StructField(fieldName, expr.getType()));
         }
         Preconditions.checkState(structFields.size() != 0);
         return new StructType(structFields);
@@ -203,9 +205,11 @@ public class Subquery extends Expr {
     @Override
     public Subquery clone() {
         Subquery ret = new Subquery(this);
-        LOG.debug("SUBQUERY clone old={} new={}",
-                System.identityHashCode(this),
-                System.identityHashCode(ret));
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("SUBQUERY clone old={} new={}",
+                    System.identityHashCode(this),
+                    System.identityHashCode(ret));
+        }
         return ret;
     }
 

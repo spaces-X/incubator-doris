@@ -19,8 +19,8 @@ package org.apache.doris.nereids.trees.expressions.visitor;
 
 import org.apache.doris.nereids.trees.expressions.Expression;
 
-import java.util.ArrayList;
-import java.util.List;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableList.Builder;
 
 /**
  * Default implementation for expression rewriting, delegating to child expressions and rewrite current root
@@ -30,15 +30,42 @@ public abstract class DefaultExpressionRewriter<C> extends ExpressionVisitor<Exp
 
     @Override
     public Expression visit(Expression expr, C context) {
-        List<Expression> newChildren = new ArrayList<>();
-        boolean hasNewChildren = false;
-        for (Expression child : expr.children()) {
-            Expression newChild = child.accept(this, context);
-            if (newChild != child) {
-                hasNewChildren = true;
+        return rewriteChildren(this, expr, context);
+    }
+
+    /** rewriteChildren */
+    public static final <E extends Expression, C> E rewriteChildren(
+            ExpressionVisitor<Expression, C> rewriter, E expr, C context) {
+        switch (expr.arity()) {
+            case 1: {
+                Expression originChild = expr.child(0);
+                Expression newChild = originChild.accept(rewriter, context);
+                return (originChild != newChild) ? (E) expr.withChildren(ImmutableList.of(newChild)) : expr;
             }
-            newChildren.add(newChild);
+            case 2: {
+                Expression originLeft = expr.child(0);
+                Expression newLeft = originLeft.accept(rewriter, context);
+                Expression originRight = expr.child(1);
+                Expression newRight = originRight.accept(rewriter, context);
+                return (originLeft != newLeft || originRight != newRight)
+                        ? (E) expr.withChildren(ImmutableList.of(newLeft, newRight))
+                        : expr;
+            }
+            case 0: {
+                return expr;
+            }
+            default: {
+                boolean hasNewChildren = false;
+                Builder<Expression> newChildren = ImmutableList.builderWithExpectedSize(expr.arity());
+                for (Expression child : expr.children()) {
+                    Expression newChild = child.accept(rewriter, context);
+                    if (newChild != child) {
+                        hasNewChildren = true;
+                    }
+                    newChildren.add(newChild);
+                }
+                return hasNewChildren ? (E) expr.withChildren(newChildren.build()) : expr;
+            }
         }
-        return hasNewChildren ? expr.withChildren(newChildren) : expr;
     }
 }

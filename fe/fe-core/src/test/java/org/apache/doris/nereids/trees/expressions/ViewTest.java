@@ -23,11 +23,12 @@ import org.apache.doris.nereids.glue.translator.PhysicalPlanTranslator;
 import org.apache.doris.nereids.glue.translator.PlanTranslatorContext;
 import org.apache.doris.nereids.parser.NereidsParser;
 import org.apache.doris.nereids.properties.PhysicalProperties;
-import org.apache.doris.nereids.rules.analysis.EliminateAliasNode;
-import org.apache.doris.nereids.rules.rewrite.logical.MergeConsecutiveProjects;
+import org.apache.doris.nereids.rules.analysis.LogicalSubQueryAliasToLogicalProject;
+import org.apache.doris.nereids.rules.rewrite.InlineLogicalView;
+import org.apache.doris.nereids.rules.rewrite.MergeProjects;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalPlan;
+import org.apache.doris.nereids.util.MemoPatternMatchSupported;
 import org.apache.doris.nereids.util.MemoTestUtils;
-import org.apache.doris.nereids.util.PatternMatchSupported;
 import org.apache.doris.nereids.util.PlanChecker;
 import org.apache.doris.utframe.TestWithFeService;
 
@@ -36,12 +37,12 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-public class ViewTest extends TestWithFeService implements PatternMatchSupported {
+public class ViewTest extends TestWithFeService implements MemoPatternMatchSupported {
 
     @Override
     protected void runBeforeAll() throws Exception {
         createDatabase("test");
-        connectContext.setDatabase("default_cluster:test");
+        connectContext.setDatabase("test");
         createTables(
                 "CREATE TABLE IF NOT EXISTS T1 (\n"
                         + "    ID1 bigint,\n"
@@ -78,7 +79,7 @@ public class ViewTest extends TestWithFeService implements PatternMatchSupported
 
     @Override
     protected void runBeforeEach() throws Exception {
-        NamedExpressionUtil.clear();
+        StatementScopeIdGenerator.clear();
     }
 
     @Test
@@ -96,15 +97,16 @@ public class ViewTest extends TestWithFeService implements PatternMatchSupported
 
         // check whether they can be translated.
         for (String sql : testSql) {
-            NamedExpressionUtil.clear();
+            StatementScopeIdGenerator.clear();
             System.out.println("\n\n***** " + sql + " *****\n\n");
             StatementContext statementContext = MemoTestUtils.createStatementContext(connectContext, sql);
-            PhysicalPlan plan = new NereidsPlanner(statementContext).plan(
+            NereidsPlanner planner = new NereidsPlanner(statementContext);
+            PhysicalPlan plan = planner.plan(
                     new NereidsParser().parseSingle(sql),
                     PhysicalProperties.ANY
             );
             // Just to check whether translate will throw exception
-            new PhysicalPlanTranslator().translatePlan(plan, new PlanTranslatorContext());
+            new PhysicalPlanTranslator(new PlanTranslatorContext(planner.getCascadesContext())).translatePlan(plan);
         }
     }
 
@@ -112,9 +114,9 @@ public class ViewTest extends TestWithFeService implements PatternMatchSupported
     public void testSimpleViewMergeProjects() {
         PlanChecker.from(connectContext)
                 .analyze("SELECT * FROM V1")
-                .applyTopDown(new EliminateAliasNode())
-                .applyTopDown(new MergeConsecutiveProjects())
-                .matchesFromRoot(
+                .applyTopDown(new LogicalSubQueryAliasToLogicalProject())
+                .applyTopDown(new MergeProjects())
+                .matches(
                       logicalProject(
                               logicalOlapScan()
                       )
@@ -139,18 +141,19 @@ public class ViewTest extends TestWithFeService implements PatternMatchSupported
                         + ") Y\n"
                         + "ON X.ID1 = Y.ID3"
                 )
-                .applyTopDown(new EliminateAliasNode())
-                .applyTopDown(new MergeConsecutiveProjects())
-                .matchesFromRoot(
+                .applyTopDown(new LogicalSubQueryAliasToLogicalProject())
+                .applyBottomUp(new InlineLogicalView())
+                .applyTopDown(new MergeProjects())
+                .matches(
                         logicalProject(
                                 logicalJoin(
                                         logicalProject(
                                                 logicalJoin(
                                                         logicalProject(
-                                                                logicalOlapScan()
+                                                                    logicalOlapScan()
                                                         ),
                                                         logicalProject(
-                                                                logicalOlapScan()
+                                                                    logicalOlapScan()
                                                         )
                                                 )
                                         ),

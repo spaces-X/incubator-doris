@@ -17,15 +17,24 @@
 
 #pragma once
 
+#include <gen_cpp/DataSinks_types.h>
+#include <gen_cpp/Types_types.h>
 #include <thrift/TApplicationException.h>
-#include <thrift/protocol/TBinaryProtocol.h>
-#include <thrift/protocol/TDebugProtocol.h>
 #include <thrift/transport/TBufferTransports.h>
 
-#include <sstream>
+#include <cstdint>
+#include <cstring>
+#include <exception>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "common/status.h"
+
+namespace apache::thrift::protocol {
+class TProtocol;
+class TProtocolFactory;
+} // namespace apache::thrift::protocol
 
 namespace doris {
 
@@ -50,7 +59,7 @@ public:
         uint8_t* buffer = nullptr;
         RETURN_IF_ERROR(serialize<T>(obj, &len, &buffer));
         result->resize(len);
-        memcpy(&((*result)[0]), buffer, len);
+        memcpy(result->data(), buffer, len);
         return Status::OK();
     }
 
@@ -124,8 +133,14 @@ Status deserialize_thrift_msg(const uint8_t* buf, uint32_t* len, bool compact,
     // Deserialize msg bytes into c++ thrift msg using memory
     // transport. TMemoryBuffer is not const-safe, although we use it in
     // a const-safe way, so we have to explicitly cast away the const.
+    auto conf = std::make_shared<apache::thrift::TConfiguration>();
+    // On Thrift 0.14.0+, need use TConfiguration to raise the max message size.
+    // max message size is 100MB default, so make it unlimited.
+    conf->setMaxMessageSize(std::numeric_limits<int>::max());
     std::shared_ptr<apache::thrift::transport::TMemoryBuffer> tmem_transport(
-            new apache::thrift::transport::TMemoryBuffer(const_cast<uint8_t*>(buf), *len));
+            new apache::thrift::transport::TMemoryBuffer(
+                    const_cast<uint8_t*>(buf), *len,
+                    apache::thrift::transport::TMemoryBuffer::OBSERVE, conf));
     std::shared_ptr<apache::thrift::protocol::TProtocol> tproto =
             create_deserialize_protocol(tmem_transport, compact);
 
@@ -159,5 +174,9 @@ void t_network_address_to_string(const TNetworkAddress& address, std::string* ou
 // Compares two TNetworkAddresses alphanumerically by their host:port
 // string representation
 bool t_network_address_comparator(const TNetworkAddress& a, const TNetworkAddress& b);
+
+PURE std::string to_string(const TUniqueId& id);
+
+PURE bool _has_inverted_index_or_partial_update(TOlapTableSink sink);
 
 } // namespace doris

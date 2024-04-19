@@ -21,41 +21,68 @@ import org.apache.doris.thrift.TPartitionVersionInfo;
 import org.apache.doris.thrift.TPublishVersionRequest;
 import org.apache.doris.thrift.TTaskType;
 
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class PublishVersionTask extends AgentTask {
     private static final Logger LOG = LogManager.getLogger(PublishVersionTask.class);
 
     private long transactionId;
     private List<TPartitionVersionInfo> partitionVersionInfos;
+
+    /**
+     * for delta rows statistics to exclude rollup tablets
+     */
+    private Set<Long> baseTabletsIds = Sets.newHashSet();
+
     private List<Long> errorTablets;
-    private boolean isFinished;
+
+    // tabletId => version, current version = 0
+    private Map<Long, Long> succTablets;
+
+    /**
+     * To collect loaded rows for each table from each BE
+     */
+    private final Map<Long, Long> tableIdToDeltaNumRows = Maps.newHashMap();
 
     public PublishVersionTask(long backendId, long transactionId, long dbId,
             List<TPartitionVersionInfo> partitionVersionInfos, long createTime) {
         super(null, backendId, TTaskType.PUBLISH_VERSION, dbId, -1L, -1L, -1L, -1L, transactionId, createTime);
         this.transactionId = transactionId;
         this.partitionVersionInfos = partitionVersionInfos;
-        this.errorTablets = new ArrayList<Long>();
+        this.succTablets = null;
+        this.errorTablets = new ArrayList<>();
         this.isFinished = false;
     }
 
     public TPublishVersionRequest toThrift() {
         TPublishVersionRequest publishVersionRequest = new TPublishVersionRequest(transactionId,
                 partitionVersionInfos);
+        publishVersionRequest.setBaseTabletIds(baseTabletsIds);
         return publishVersionRequest;
+    }
+
+    public void setBaseTabletsIds(Set<Long> rollupTabletIds) {
+        this.baseTabletsIds = rollupTabletIds;
     }
 
     public long getTransactionId() {
         return transactionId;
     }
 
-    public List<TPartitionVersionInfo> getPartitionVersionInfos() {
-        return partitionVersionInfos;
+    public Map<Long, Long> getSuccTablets() {
+        return succTablets;
+    }
+
+    public void setSuccTablets(Map<Long, Long> succTablets) {
+        this.succTablets = succTablets;
     }
 
     public synchronized List<Long> getErrorTablets() {
@@ -70,11 +97,11 @@ public class PublishVersionTask extends AgentTask {
         this.errorTablets.addAll(errorTablets);
     }
 
-    public void setIsFinished(boolean isFinished) {
-        this.isFinished = isFinished;
+    public void setTableIdToDeltaNumRows(Map<Long, Long> tabletIdToDeltaNumRows) {
+        this.tableIdToDeltaNumRows.putAll(tabletIdToDeltaNumRows);
     }
 
-    public boolean isFinished() {
-        return isFinished;
+    public Map<Long, Long> getTableIdToDeltaNumRows() {
+        return tableIdToDeltaNumRows;
     }
 }

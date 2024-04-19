@@ -24,7 +24,7 @@ import org.apache.doris.thrift.TStatusCode;
 public class Status {
     public static final Status OK = new Status();
     public static final Status CANCELLED = new Status(TStatusCode.CANCELLED, "Cancelled");
-    public static final Status THRIFT_RPC_ERROR = new Status(TStatusCode.THRIFT_RPC_ERROR, "Thrift RPC failed");
+    public static final Status TIMEOUT = new Status(TStatusCode.TIMEOUT, "Timeout");
 
     public TStatusCode getErrorCode() {
         return errorCode;
@@ -127,5 +127,10 @@ public class Status {
                 break;
             }
         }
+    }
+
+    @Override
+    public String toString() {
+        return "Status [errorCode=" + errorCode + ", errorMsg=" + errorMsg + "]";
     }
 }

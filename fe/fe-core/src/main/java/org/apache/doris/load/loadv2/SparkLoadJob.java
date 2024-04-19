@@ -44,7 +44,6 @@ import org.apache.doris.catalog.TableIf;
 import org.apache.doris.catalog.Tablet;
 import org.apache.doris.catalog.Type;
 import org.apache.doris.common.AnalysisException;
-import org.apache.doris.common.Config;
 import org.apache.doris.common.DataQualityException;
 import org.apache.doris.common.DdlException;
 import org.apache.doris.common.DuplicatedRequestException;
@@ -61,10 +60,10 @@ import org.apache.doris.common.util.MetaLockUtils;
 import org.apache.doris.load.EtlJobType;
 import org.apache.doris.load.EtlStatus;
 import org.apache.doris.load.FailMsg;
-import org.apache.doris.load.loadv2.dpp.DppResult;
-import org.apache.doris.load.loadv2.etl.EtlJobConfig;
 import org.apache.doris.qe.OriginStatement;
 import org.apache.doris.service.FrontendOptions;
+import org.apache.doris.sparkdpp.DppResult;
+import org.apache.doris.sparkdpp.EtlJobConfig;
 import org.apache.doris.system.Backend;
 import org.apache.doris.task.AgentBatchTask;
 import org.apache.doris.task.AgentTaskExecutor;
@@ -104,6 +103,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -213,7 +213,7 @@ public class SparkLoadJob extends BulkLoadJob {
 
         // create pending task
         LoadTask task = new SparkLoadPendingTask(this, fileGroupAggInfo.getAggKeyToFileGroups(), sparkResource,
-                brokerDesc);
+                brokerDesc, getPriority());
         task.init();
         idToTasks.put(task.getSignature(), task);
         Env.getCurrentEnv().getPendingLoadTaskScheduler().submit(task);
@@ -407,7 +407,13 @@ public class SparkLoadJob extends BulkLoadJob {
     private PushBrokerReaderParams getPushBrokerReaderParams(OlapTable table, long indexId) throws UserException {
         if (!indexToPushBrokerReaderParams.containsKey(indexId)) {
             PushBrokerReaderParams pushBrokerReaderParams = new PushBrokerReaderParams();
-            pushBrokerReaderParams.init(table.getSchemaByIndexId(indexId), brokerDesc);
+            List<Column> columns = new ArrayList<>();
+            table.getSchemaByIndexId(indexId).forEach(col -> {
+                Column column = new Column(col);
+                column.setName(col.getName().toLowerCase(Locale.ROOT));
+                columns.add(column);
+            });
+            pushBrokerReaderParams.init(columns, brokerDesc);
             indexToPushBrokerReaderParams.put(indexId, pushBrokerReaderParams);
         }
         return indexToPushBrokerReaderParams.get(indexId);
@@ -445,6 +451,7 @@ public class SparkLoadJob extends BulkLoadJob {
                 for (TableIf table : tableList) {
                     Set<Long> partitionIds = tableToLoadPartitions.get(table.getId());
                     OlapTable olapTable = (OlapTable) table;
+                    String vaultId = olapTable.getStorageVaultId();
                     for (long partitionId : partitionIds) {
                         Partition partition = olapTable.getPartition(partitionId);
                         if (partition == null) {
@@ -464,7 +471,9 @@ public class SparkLoadJob extends BulkLoadJob {
 
                             List<TColumn> columnsDesc = new ArrayList<TColumn>();
                             for (Column column : olapTable.getSchemaByIndexId(indexId)) {
-                                columnsDesc.add(column.toThrift());
+                                TColumn tColumn = column.toThrift();
+                                tColumn.setColumnName(tColumn.getColumnName().toLowerCase(Locale.ROOT));
+                                columnsDesc.add(tColumn);
                             }
 
                             int bucket = 0;
@@ -482,7 +491,7 @@ public class SparkLoadJob extends BulkLoadJob {
                                             || !tabletToSentReplicaPushTask.get(tabletId).containsKey(replicaId)) {
                                         long backendId = replica.getBackendId();
                                         long taskSignature = Env.getCurrentGlobalTransactionMgr()
-                                                .getTransactionIDGenerator().getNextTransactionId();
+                                                .getNextTransactionId();
 
                                         PushBrokerReaderParams params = getPushBrokerReaderParams(olapTable, indexId);
                                         // deep copy TBrokerScanRange because filePath and fileSize will be updated
@@ -505,18 +514,21 @@ public class SparkLoadJob extends BulkLoadJob {
                                         FsBroker fsBroker = Env.getCurrentEnv().getBrokerMgr().getBroker(
                                                 brokerDesc.getName(), backend.getHost());
                                         tBrokerScanRange.getBrokerAddresses().add(
-                                                new TNetworkAddress(fsBroker.ip, fsBroker.port));
+                                                new TNetworkAddress(fsBroker.host, fsBroker.port));
 
-                                        LOG.debug("push task for replica {}, broker {}:{},"
-                                                        + " backendId {}, filePath {}, fileSize {}",
-                                                replicaId, fsBroker.ip,
-                                                fsBroker.port, backendId, tBrokerRangeDesc.path,
-                                                tBrokerRangeDesc.file_size);
+                                        if (LOG.isDebugEnabled()) {
+                                            LOG.debug("push task for replica {}, broker {}:{},"
+                                                            + " backendId {}, filePath {}, fileSize {}",
+                                                    replicaId, fsBroker.host,
+                                                    fsBroker.port, backendId, tBrokerRangeDesc.path,
+                                                    tBrokerRangeDesc.file_size);
+                                        }
 
                                         PushTask pushTask = new PushTask(backendId, dbId, olapTable.getId(),
                                                 partitionId, indexId, tabletId, replicaId, schemaHash, 0, id,
                                                 TPushType.LOAD_V2, TPriority.NORMAL, transactionId, taskSignature,
-                                                tBrokerScanRange, params.tDescriptorTable, columnsDesc);
+                                                tBrokerScanRange, params.tDescriptorTable, columnsDesc,
+                                                vaultId);
                                         if (AgentTaskQueue.addTask(pushTask)) {
                                             batchTask.addTask(pushTask);
                                             if (!tabletToSentReplicaPushTask.containsKey(tabletId)) {
@@ -617,7 +629,7 @@ public class SparkLoadJob extends BulkLoadJob {
             }
 
             // if all replicas are finished or stay in quorum finished for long time, try to commit it.
-            long stragglerTimeout = Config.load_straggler_wait_second * 1000;
+            long stragglerTimeout = 300 * 1000;
             if ((quorumFinishTimestamp > 0 && System.currentTimeMillis() - quorumFinishTimestamp > stragglerTimeout)
                     || fullTablets.containsAll(totalTablets)) {
                 canCommitJob = true;
@@ -659,7 +671,9 @@ public class SparkLoadJob extends BulkLoadJob {
     private void clearJob() {
         Preconditions.checkState(state == JobState.FINISHED || state == JobState.CANCELLED);
 
-        LOG.debug("kill etl job and delete etl files. id: {}, state: {}", id, state);
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("kill etl job and delete etl files. id: {}, state: {}", id, state);
+        }
         SparkEtlJobHandler handler = new SparkEtlJobHandler();
         if (state == JobState.CANCELLED) {
             if ((!Strings.isNullOrEmpty(appId) && sparkResource.isYarnMaster()) || sparkLoadAppHandle != null) {
@@ -680,7 +694,9 @@ public class SparkLoadJob extends BulkLoadJob {
             }
         }
 
-        LOG.debug("clear push tasks and infos that not persist. id: {}, state: {}", id, state);
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("clear push tasks and infos that not persist. id: {}, state: {}", id, state);
+        }
         writeLock();
         try {
             // clear push task first
@@ -695,6 +711,8 @@ public class SparkLoadJob extends BulkLoadJob {
             // clear job infos that not persist
             sparkLoadAppHandle = null;
             resourceDesc = null;
+            etlOutputPath = "";
+            appId = "";
             tableToLoadPartitions.clear();
             indexToPushBrokerReaderParams.clear();
             indexToSchemaHash.clear();
@@ -714,6 +732,13 @@ public class SparkLoadJob extends BulkLoadJob {
     }
 
     @Override
+    public void afterAborted(TransactionState txnState, boolean txnOperated, String txnStatusChangeReason)
+            throws UserException {
+        super.afterAborted(txnState, txnOperated, txnStatusChangeReason);
+        clearJob();
+    }
+
+    @Override
     public void cancelJobWithoutCheck(FailMsg failMsg, boolean abortTxn, boolean needLog) {
         super.cancelJobWithoutCheck(failMsg, abortTxn, needLog);
         clearJob();
@@ -726,7 +751,7 @@ public class SparkLoadJob extends BulkLoadJob {
     }
 
     @Override
-    protected String getResourceName() {
+    public String getResourceName() {
         return sparkResource.getName();
     }
 
@@ -740,11 +765,13 @@ public class SparkLoadJob extends BulkLoadJob {
     }
 
     public void clearSparkLauncherLog() {
-        String logPath = sparkLoadAppHandle.getLogPath();
-        if (!Strings.isNullOrEmpty(logPath)) {
-            File file = new File(logPath);
-            if (file.exists()) {
-                file.delete();
+        if (sparkLoadAppHandle != null) {
+            String logPath = sparkLoadAppHandle.getLogPath();
+            if (!Strings.isNullOrEmpty(logPath)) {
+                File file = new File(logPath);
+                if (file.exists()) {
+                    file.delete();
+                }
             }
         }
     }

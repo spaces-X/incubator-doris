@@ -30,19 +30,20 @@ import org.apache.doris.common.UserException;
 import org.apache.doris.common.util.SqlParserUtils;
 import org.apache.doris.common.util.TimeUtils;
 import org.apache.doris.load.loadv2.LoadTask;
+import org.apache.doris.thrift.TFileCompressType;
 import org.apache.doris.thrift.TFileFormatType;
 import org.apache.doris.thrift.TFileType;
 import org.apache.doris.thrift.TStreamLoadPutRequest;
 import org.apache.doris.thrift.TUniqueId;
 
 import com.google.common.base.Strings;
-import com.google.common.collect.Lists;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.io.StringReader;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class StreamLoadTask implements LoadTaskInfo {
 
@@ -52,6 +53,7 @@ public class StreamLoadTask implements LoadTaskInfo {
     private long txnId;
     private TFileType fileType;
     private TFileFormatType formatType;
+    private TFileCompressType compressType = TFileCompressType.UNKNOWN;
     private boolean stripOuterArray;
     private boolean numAsString;
     private String jsonPaths;
@@ -66,6 +68,7 @@ public class StreamLoadTask implements LoadTaskInfo {
     private Separator lineDelimiter;
     private PartitionNames partitions;
     private String path;
+    private long fileSize = 0;
     private boolean negative;
     private boolean strictMode = false; // default is false
     private String timezone = TimeUtils.DEFAULT_TIME_ZONE;
@@ -79,12 +82,28 @@ public class StreamLoadTask implements LoadTaskInfo {
     private boolean loadToSingleTablet = false;
     private String headerType = "";
     private List<String> hiddenColumns;
+    private boolean trimDoubleQuotes = false;
+    private boolean isPartialUpdate = false;
 
-    public StreamLoadTask(TUniqueId id, long txnId, TFileType fileType, TFileFormatType formatType) {
+    private int skipLines = 0;
+    private boolean enableProfile = false;
+
+    private boolean memtableOnSinkNode = false;
+    private int streamPerNode = 20;
+
+    private byte enclose = 0;
+
+    private byte escape = 0;
+
+    private String groupCommit;
+
+    public StreamLoadTask(TUniqueId id, long txnId, TFileType fileType, TFileFormatType formatType,
+            TFileCompressType compressType) {
         this.id = id;
         this.txnId = txnId;
         this.fileType = fileType;
         this.formatType = formatType;
+        this.compressType = compressType;
         this.jsonPaths = "";
         this.jsonRoot = "";
         this.stripOuterArray = false;
@@ -107,6 +126,10 @@ public class StreamLoadTask implements LoadTaskInfo {
 
     public TFileFormatType getFormatType() {
         return formatType;
+    }
+
+    public TFileCompressType getCompressType() {
+        return compressType;
     }
 
     public ImportColumnDescs getColumnExprDescs() {
@@ -134,6 +157,24 @@ public class StreamLoadTask implements LoadTaskInfo {
     }
 
     @Override
+    public byte getEnclose() {
+        return enclose;
+    }
+
+    public void setEnclose(byte enclose) {
+        this.enclose = enclose;
+    }
+
+    @Override
+    public byte getEscape() {
+        return escape;
+    }
+
+    public void setEscape(byte escape) {
+        this.escape = escape;
+    }
+
+    @Override
     public int getSendBatchParallelism() {
         return sendBatchParallelism;
     }
@@ -149,6 +190,11 @@ public class StreamLoadTask implements LoadTaskInfo {
 
     public String getPath() {
         return path;
+    }
+
+    @Override
+    public long getFileSize() {
+        return fileSize;
     }
 
     public boolean getNegative() {
@@ -236,11 +282,69 @@ public class StreamLoadTask implements LoadTaskInfo {
         return hiddenColumns;
     }
 
+    @Override
+    public boolean getTrimDoubleQuotes() {
+        return trimDoubleQuotes;
+    }
+
+    public int getSkipLines() {
+        return skipLines;
+    }
+
+    @Override
+    public boolean getEnableProfile() {
+        return enableProfile;
+    }
+
+    @Override
+    public boolean isPartialUpdate() {
+        return isPartialUpdate;
+    }
+
+    @Override
+    public boolean isMemtableOnSinkNode() {
+        return memtableOnSinkNode;
+    }
+
+    public void setMemtableOnSinkNode(boolean memtableOnSinkNode) {
+        this.memtableOnSinkNode = memtableOnSinkNode;
+    }
+
+    @Override
+    public int getStreamPerNode() {
+        return streamPerNode;
+    }
+
+    public void setStreamPerNode(int streamPerNode) {
+        this.streamPerNode = streamPerNode;
+    }
+
     public static StreamLoadTask fromTStreamLoadPutRequest(TStreamLoadPutRequest request) throws UserException {
         StreamLoadTask streamLoadTask = new StreamLoadTask(request.getLoadId(), request.getTxnId(),
-                                                           request.getFileType(), request.getFormatType());
+                request.getFileType(), request.getFormatType(),
+                request.getCompressType());
         streamLoadTask.setOptionalFromTSLPutRequest(request);
+        streamLoadTask.setGroupCommit(request.getGroupCommitMode());
+        if (request.isSetFileSize()) {
+            streamLoadTask.fileSize = request.getFileSize();
+        }
         return streamLoadTask;
+    }
+
+    public void setMultiTableBaseTaskInfo(LoadTaskInfo task) {
+        this.mergeType = task.getMergeType();
+        this.columnSeparator = task.getColumnSeparator();
+        this.whereExpr = task.getWhereExpr();
+        this.partitions = task.getPartitions();
+        this.deleteCondition = task.getDeleteCondition();
+        this.lineDelimiter = task.getLineDelimiter();
+        this.strictMode = task.isStrictMode();
+        this.timezone = task.getTimezone();
+        this.formatType = task.getFormatType();
+        this.stripOuterArray = task.isStripOuterArray();
+        this.jsonRoot = task.getJsonRoot();
+        this.sendBatchParallelism = task.getSendBatchParallelism();
+        this.loadToSingleTablet = task.isLoadToSingleTablet();
     }
 
     private void setOptionalFromTSLPutRequest(TStreamLoadPutRequest request) throws UserException {
@@ -256,15 +360,22 @@ public class StreamLoadTask implements LoadTaskInfo {
         if (request.isSetLineDelimiter()) {
             setLineDelimiter(request.getLineDelimiter());
         }
+        if (request.isSetEnclose()) {
+            setEnclose(request.getEnclose());
+        }
+        if (request.isSetEscape()) {
+            setEscape(request.getEscape());
+        }
         if (request.isSetHeaderType()) {
             headerType = request.getHeaderType();
         }
         if (request.isSetPartitions()) {
-            String[] partNames = request.getPartitions().trim().split("\\s*,\\s*");
+            String[] splitPartNames = request.getPartitions().trim().split(",");
+            List<String> partNames = Arrays.stream(splitPartNames).map(String::trim).collect(Collectors.toList());
             if (request.isSetIsTempPartition()) {
-                partitions = new PartitionNames(request.isIsTempPartition(), Lists.newArrayList(partNames));
+                partitions = new PartitionNames(request.isIsTempPartition(), partNames);
             } else {
-                partitions = new PartitionNames(false, Lists.newArrayList(partNames));
+                partitions = new PartitionNames(false, partNames);
             }
         }
         switch (request.getFileType()) {
@@ -330,6 +441,26 @@ public class StreamLoadTask implements LoadTaskInfo {
         }
         if (request.isSetHiddenColumns()) {
             hiddenColumns = Arrays.asList(request.getHiddenColumns().replaceAll("\\s+", "").split(","));
+        }
+        if (request.isSetTrimDoubleQuotes()) {
+            trimDoubleQuotes = request.isTrimDoubleQuotes();
+        }
+        if (request.isSetSkipLines()) {
+            skipLines = request.getSkipLines();
+        }
+        if (request.isSetEnableProfile()) {
+            enableProfile = request.isEnableProfile();
+        }
+        if (request.isSetPartialUpdate()) {
+            isPartialUpdate = request.isPartialUpdate();
+        }
+        if (request.isSetMemtableOnSinkNode()) {
+            this.memtableOnSinkNode = request.isMemtableOnSinkNode();
+        } else {
+            this.memtableOnSinkNode = Config.stream_load_default_memtable_on_sink_node;
+        }
+        if (request.isSetStreamPerNode()) {
+            this.streamPerNode = request.getStreamPerNode();
         }
     }
 
@@ -405,5 +536,13 @@ public class StreamLoadTask implements LoadTaskInfo {
     @Override
     public double getMaxFilterRatio() {
         return maxFilterRatio;
+    }
+
+    public void setGroupCommit(String groupCommit) {
+        this.groupCommit = groupCommit;
+    }
+
+    public String getGroupCommit() {
+        return groupCommit;
     }
 }

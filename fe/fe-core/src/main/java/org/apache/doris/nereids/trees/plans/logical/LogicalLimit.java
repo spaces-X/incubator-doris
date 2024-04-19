@@ -18,9 +18,15 @@
 package org.apache.doris.nereids.trees.plans.logical;
 
 import org.apache.doris.nereids.memo.GroupExpression;
+import org.apache.doris.nereids.properties.ExprFdItem;
+import org.apache.doris.nereids.properties.FdFactory;
+import org.apache.doris.nereids.properties.FdItem;
+import org.apache.doris.nereids.properties.FunctionalDependencies;
 import org.apache.doris.nereids.properties.LogicalProperties;
 import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.Slot;
+import org.apache.doris.nereids.trees.expressions.SlotReference;
+import org.apache.doris.nereids.trees.plans.LimitPhase;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.PlanType;
 import org.apache.doris.nereids.trees.plans.algebra.Limit;
@@ -29,6 +35,7 @@ import org.apache.doris.nereids.util.Utils;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 
 import java.util.List;
 import java.util.Objects;
@@ -44,18 +51,28 @@ import java.util.Optional;
  * offset 100
  */
 public class LogicalLimit<CHILD_TYPE extends Plan> extends LogicalUnary<CHILD_TYPE> implements Limit {
+    private final LimitPhase phase;
     private final long limit;
     private final long offset;
 
-    public LogicalLimit(long limit, long offset, CHILD_TYPE child) {
-        this(limit, offset, Optional.empty(), Optional.empty(), child);
+    public LogicalLimit(long limit, long offset, LimitPhase phase, CHILD_TYPE child) {
+        this(limit, offset, phase, Optional.empty(), Optional.empty(), child);
     }
 
-    public LogicalLimit(long limit, long offset, Optional<GroupExpression> groupExpression,
+    public LogicalLimit(long limit, long offset, LimitPhase phase, Optional<GroupExpression> groupExpression,
             Optional<LogicalProperties> logicalProperties, CHILD_TYPE child) {
         super(PlanType.LOGICAL_LIMIT, groupExpression, logicalProperties, child);
         this.limit = limit;
         this.offset = offset;
+        this.phase = phase;
+    }
+
+    public LimitPhase getPhase() {
+        return phase;
+    }
+
+    public boolean isSplit() {
+        return phase != LimitPhase.ORIGIN;
     }
 
     public long getLimit() {
@@ -75,7 +92,8 @@ public class LogicalLimit<CHILD_TYPE extends Plan> extends LogicalUnary<CHILD_TY
     public String toString() {
         return Utils.toSqlString("LogicalLimit",
                 "limit", limit,
-                "offset", offset
+                "offset", offset,
+                "phase", phase
         );
     }
 
@@ -92,32 +110,75 @@ public class LogicalLimit<CHILD_TYPE extends Plan> extends LogicalUnary<CHILD_TY
         if (o == null || getClass() != o.getClass()) {
             return false;
         }
-        LogicalLimit that = (LogicalLimit) o;
-        return limit == that.limit && offset == that.offset;
+        LogicalLimit<?> that = (LogicalLimit<?>) o;
+        return limit == that.limit && offset == that.offset && phase == that.phase;
     }
 
     @Override
     public <R, C> R accept(PlanVisitor<R, C> visitor, C context) {
-        return visitor.visitLogicalLimit((LogicalLimit<Plan>) this, context);
+        return visitor.visitLogicalLimit(this, context);
     }
 
-    public List<Expression> getExpressions() {
+    public List<? extends Expression> getExpressions() {
         return ImmutableList.of();
+    }
+
+    public LogicalLimit<Plan> withLimitChild(long limit, long offset, Plan child) {
+        Preconditions.checkArgument(children.size() == 1,
+                "LogicalTopN should have 1 child, but input is %s", children.size());
+        return new LogicalLimit<>(limit, offset, phase, child);
     }
 
     @Override
     public Plan withGroupExpression(Optional<GroupExpression> groupExpression) {
-        return new LogicalLimit<>(limit, offset, groupExpression, Optional.of(logicalProperties), child());
+        return new LogicalLimit<>(limit, offset, phase, groupExpression, Optional.of(getLogicalProperties()), child());
     }
 
     @Override
-    public Plan withLogicalProperties(Optional<LogicalProperties> logicalProperties) {
-        return new LogicalLimit<>(limit, offset, Optional.empty(), logicalProperties, child());
+    public Plan withGroupExprLogicalPropChildren(Optional<GroupExpression> groupExpression,
+            Optional<LogicalProperties> logicalProperties, List<Plan> children) {
+        Preconditions.checkArgument(children.size() == 1);
+        return new LogicalLimit<>(limit, offset, phase, groupExpression, logicalProperties, children.get(0));
     }
 
     @Override
     public LogicalLimit<Plan> withChildren(List<Plan> children) {
         Preconditions.checkArgument(children.size() == 1);
-        return new LogicalLimit<>(limit, offset, children.get(0));
+        return new LogicalLimit<>(limit, offset, phase, children.get(0));
+    }
+
+    @Override
+    public void computeUnique(FunctionalDependencies.Builder fdBuilder) {
+        if (getLimit() == 1) {
+            getOutput().forEach(fdBuilder::addUniqueSlot);
+        } else {
+            fdBuilder.addUniqueSlot(child(0).getLogicalProperties().getFunctionalDependencies());
+        }
+    }
+
+    @Override
+    public void computeUniform(FunctionalDependencies.Builder fdBuilder) {
+        if (getLimit() == 1) {
+            getOutput().forEach(fdBuilder::addUniformSlot);
+        } else {
+            fdBuilder.addUniformSlot(child(0).getLogicalProperties().getFunctionalDependencies());
+        }
+    }
+
+    @Override
+    public ImmutableSet<FdItem> computeFdItems() {
+        ImmutableSet<FdItem> fdItems = child(0).getLogicalProperties().getFunctionalDependencies().getFdItems();
+        if (getLimit() == 1 && !phase.isLocal()) {
+            ImmutableSet.Builder<FdItem> builder = ImmutableSet.builder();
+            List<Slot> output = getOutput();
+            ImmutableSet<SlotReference> slotSet = output.stream()
+                    .filter(SlotReference.class::isInstance)
+                    .map(SlotReference.class::cast)
+                    .collect(ImmutableSet.toImmutableSet());
+            ExprFdItem fdItem = FdFactory.INSTANCE.createExprFdItem(slotSet, true, slotSet);
+            builder.add(fdItem);
+            fdItems = builder.build();
+        }
+        return fdItems;
     }
 }

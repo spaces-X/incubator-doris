@@ -29,8 +29,8 @@ ROOT=$(
 )
 
 CURDIR=${ROOT}
-SSB_DBGEN_DIR=${CURDIR}/ssb-dbgen/
-SSB_DATA_DIR=${CURDIR}/ssb-data/
+SSB_DBGEN_DIR=${CURDIR}/ssb-dbgen
+SSB_DATA_DIR=${CURDIR}/ssb-data
 
 usage() {
     echo "
@@ -88,9 +88,8 @@ while true; do
     esac
 done
 
-if [[ ${HELP} -eq 1 ]]; then
+if [[ "${HELP}" -eq 1 ]]; then
     usage
-    exit
 fi
 
 echo "Scale Factor: ${SCALE_FACTOR}"
@@ -110,6 +109,7 @@ fi
 mkdir "${SSB_DATA_DIR}/"
 
 # gen data
+date
 cd "${SSB_DBGEN_DIR}"
 echo "Begin to generate data for table: customer"
 "${SSB_DBGEN_DIR}/dbgen" -f -s "${SCALE_FACTOR}" -T c
@@ -121,6 +121,7 @@ echo "Begin to generate data for table: date"
 "${SSB_DBGEN_DIR}/dbgen" -f -s "${SCALE_FACTOR}" -T d
 echo "Begin to generate data for table: lineorder"
 "${SSB_DBGEN_DIR}/dbgen" -f -s "${SCALE_FACTOR}" -T l -C "${PARALLEL}"
+date
 cd -
 
 # move data to $SSB_DATA_DIR

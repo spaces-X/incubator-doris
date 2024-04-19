@@ -44,6 +44,7 @@ import java.util.Objects;
 public class Partition extends MetaObject implements Writable {
     private static final Logger LOG = LogManager.getLogger(Partition.class);
 
+    // Every partition starts from version 1, version 1 has no data
     public static final long PARTITION_INIT_VERSION = 1L;
 
     public enum PartitionState {
@@ -95,14 +96,14 @@ public class Partition extends MetaObject implements Writable {
     @SerializedName(value = "visibleVersionHash")
     private long visibleVersionHash;
     @SerializedName(value = "nextVersion")
-    private long nextVersion;
+    protected long nextVersion;
     @Deprecated
     @SerializedName(value = "nextVersionHash")
     private long nextVersionHash;
     @SerializedName(value = "distributionInfo")
     private DistributionInfo distributionInfo;
 
-    private Partition() {
+    protected Partition() {
     }
 
     public Partition(long id, String name,
@@ -168,8 +169,20 @@ public class Partition extends MetaObject implements Writable {
         return visibleVersionTime;
     }
 
+    /**
+     * if visibleVersion is 1, do not return creation time but 0
+     *
+     * @return
+     */
+    public long getVisibleVersionTimeIgnoreInit() {
+        if (visibleVersion == 1) {
+            return 0L;
+        }
+        return visibleVersionTime;
+    }
+
     // The method updateVisibleVersionAndVersionHash is called when fe restart, the visibleVersionTime is updated
-    private void setVisibleVersion(long visibleVersion) {
+    protected void setVisibleVersion(long visibleVersion) {
         this.visibleVersion = visibleVersion;
         this.visibleVersionTime = System.currentTimeMillis();
     }
@@ -197,8 +210,10 @@ public class Partition extends MetaObject implements Writable {
 
     public MaterializedIndex deleteRollupIndex(long indexId) {
         if (this.idToVisibleRollupIndex.containsKey(indexId)) {
+            LOG.info("delete visible rollup index {} in partition {}-{}", indexId, id, name);
             return idToVisibleRollupIndex.remove(indexId);
         } else {
+            LOG.info("delete shadow rollup index {} in partition {}-{}", indexId, id, name);
             return idToShadowIndex.remove(indexId);
         }
     }
@@ -251,17 +266,38 @@ public class Partition extends MetaObject implements Writable {
         return indices;
     }
 
-    public long getDataSize() {
+    public long getAllDataSize(boolean singleReplica) {
+        return getDataSize(singleReplica) + getRemoteDataSize();
+    }
+
+    // this is local data size
+    public long getDataSize(boolean singleReplica) {
         long dataSize = 0;
         for (MaterializedIndex mIndex : getMaterializedIndices(IndexExtState.VISIBLE)) {
-            dataSize += mIndex.getDataSize();
+            dataSize += mIndex.getDataSize(singleReplica);
         }
         return dataSize;
+    }
+
+    public long getRemoteDataSize() {
+        long remoteDataSize = 0;
+        for (MaterializedIndex mIndex : getMaterializedIndices(IndexExtState.VISIBLE)) {
+            remoteDataSize += mIndex.getRemoteDataSize();
+        }
+        return remoteDataSize;
     }
 
     public long getReplicaCount() {
         long replicaCount = 0;
         for (MaterializedIndex mIndex : getMaterializedIndices(IndexExtState.VISIBLE)) {
+            replicaCount += mIndex.getReplicaCount();
+        }
+        return replicaCount;
+    }
+
+    public long getAllReplicaCount() {
+        long replicaCount = 0;
+        for (MaterializedIndex mIndex : getMaterializedIndices(IndexExtState.ALL)) {
             replicaCount += mIndex.getReplicaCount();
         }
         return replicaCount;
@@ -296,7 +332,7 @@ public class Partition extends MetaObject implements Writable {
     }
 
     public static Partition read(DataInput in) throws IOException {
-        Partition partition = new Partition();
+        Partition partition = EnvFactory.getInstance().createPartition();
         partition.readFields(in);
         return partition;
     }

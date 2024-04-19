@@ -17,24 +17,31 @@
 
 #pragma once
 
-#include "gutil/macros.h"
+#include <atomic>
+#include <memory>
+#include <string>
+
+#include "common/status.h"
 #include "io/fs/file_reader.h"
+#include "io/fs/file_system.h"
 #include "io/fs/path.h"
 #include "io/fs/s3_file_system.h"
+#include "util/slice.h"
 
-namespace doris {
-namespace io {
+namespace doris::io {
+struct IOContext;
 
 class S3FileReader final : public FileReader {
 public:
-    S3FileReader(Path path, size_t file_size, std::string key, std::string bucket,
-                 S3FileSystem* fs);
+    static Result<FileReaderSPtr> create(std::shared_ptr<const S3ClientHolder> client,
+                                         std::string bucket, std::string key, int64_t file_size);
+
+    S3FileReader(std::shared_ptr<const S3ClientHolder> client, std::string bucket, std::string key,
+                 size_t file_size);
 
     ~S3FileReader() override;
 
     Status close() override;
-
-    Status read_at(size_t offset, Slice result, size_t* bytes_read) override;
 
     const Path& path() const override { return _path; }
 
@@ -42,15 +49,19 @@ public:
 
     bool closed() const override { return _closed.load(std::memory_order_acquire); }
 
+protected:
+    Status read_at_impl(size_t offset, Slice result, size_t* bytes_read,
+                        const IOContext* io_ctx) override;
+
 private:
     Path _path;
     size_t _file_size;
-    S3FileSystem* _fs;
 
     std::string _bucket;
     std::string _key;
+    std::shared_ptr<const S3ClientHolder> _client;
+
     std::atomic<bool> _closed = false;
 };
 
-} // namespace io
-} // namespace doris
+} // namespace doris::io

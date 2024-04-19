@@ -17,50 +17,61 @@
 
 #include "runtime/memory/thread_mem_tracker_mgr.h"
 
+#include <gen_cpp/types.pb.h>
+
 #include "runtime/exec_env.h"
 #include "runtime/fragment_mgr.h"
-#include "runtime/memory/mem_tracker_task_pool.h"
-#include "service/backend_options.h"
 
 namespace doris {
 
+class AsyncCancelQueryTask : public Runnable {
+    ENABLE_FACTORY_CREATOR(AsyncCancelQueryTask);
+
+public:
+    AsyncCancelQueryTask(TUniqueId query_id, const std::string& exceed_msg)
+            : _query_id(query_id), _exceed_msg(exceed_msg) {}
+    ~AsyncCancelQueryTask() override = default;
+    void run() override {
+        ExecEnv::GetInstance()->fragment_mgr()->cancel_query(
+                _query_id, PPlanFragmentCancelReason::MEMORY_LIMIT_EXCEED, _exceed_msg);
+    }
+
+private:
+    TUniqueId _query_id;
+    const std::string _exceed_msg;
+};
+
 void ThreadMemTrackerMgr::attach_limiter_tracker(
-        const std::string& task_id, const TUniqueId& fragment_instance_id,
         const std::shared_ptr<MemTrackerLimiter>& mem_tracker) {
     DCHECK(mem_tracker);
-    flush_untracked_mem<false>();
-    _task_id = task_id;
-    _fragment_instance_id = fragment_instance_id;
+    CHECK(init());
+    flush_untracked_mem();
     _limiter_tracker = mem_tracker;
     _limiter_tracker_raw = mem_tracker.get();
 }
 
-void ThreadMemTrackerMgr::detach_limiter_tracker() {
-    flush_untracked_mem<false>();
-    _task_id = "";
-    _fragment_instance_id = TUniqueId();
-    _limiter_tracker = ExecEnv::GetInstance()->process_mem_tracker();
-    _limiter_tracker_raw = ExecEnv::GetInstance()->process_mem_tracker_raw();
+void ThreadMemTrackerMgr::detach_limiter_tracker(
+        const std::shared_ptr<MemTrackerLimiter>& old_mem_tracker) {
+    CHECK(init());
+    flush_untracked_mem();
+    _limiter_tracker = old_mem_tracker;
+    _limiter_tracker_raw = old_mem_tracker.get();
 }
 
-void ThreadMemTrackerMgr::exceeded_cancel_task(const std::string& cancel_details) {
-    if (_fragment_instance_id != TUniqueId()) {
-        ExecEnv::GetInstance()->fragment_mgr()->cancel(
-                _fragment_instance_id, PPlanFragmentCancelReason::MEMORY_LIMIT_EXCEED,
-                cancel_details);
+void ThreadMemTrackerMgr::cancel_query(const std::string& exceed_msg) {
+    if (is_attach_query() && !_is_query_cancelled) {
+        Status submit_st = ExecEnv::GetInstance()->lazy_release_obj_pool()->submit(
+                AsyncCancelQueryTask::create_shared(_query_id, exceed_msg));
+        if (submit_st.ok()) {
+            // Use this flag to avoid the cancel request submit to pool many times, because even we cancel the query
+            // successfully, but the application may not use if (state.iscancelled) to exist quickly. And it may try to
+            // allocate memory and may failed again and the pool will be full.
+            _is_query_cancelled = true;
+        } else {
+            LOG(WARNING) << "Failed to submit cancel query task to pool, query_id "
+                         << print_id(_query_id) << ", error st " << submit_st;
+        }
     }
 }
 
-void ThreadMemTrackerMgr::exceeded(Status failed_try_consume_st) {
-    if (_cb_func != nullptr) {
-        _cb_func();
-    }
-    if (is_attach_query()) {
-        auto st = _limiter_tracker_raw->mem_limit_exceeded(
-                fmt::format("exec node:<{}>", last_consumer_tracker()),
-                _limiter_tracker_raw->parent().get(), failed_try_consume_st);
-        exceeded_cancel_task(st.get_error_msg());
-        _check_limit = false; // Make sure it will only be canceled once
-    }
-}
 } // namespace doris

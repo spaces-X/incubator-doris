@@ -19,6 +19,7 @@ package org.apache.doris.common;
 
 import org.apache.doris.httpv2.config.SpringLog4j2Config;
 
+import com.google.common.base.Strings;
 import com.google.common.collect.Maps;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LoggerContext;
@@ -29,6 +30,7 @@ import org.apache.logging.log4j.core.lookup.StrSubstitutor;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 //
@@ -44,40 +46,44 @@ public class Log4jConfig extends XmlConfiguration {
             + "  <Appenders>\n"
             + "    <Console name=\"Console\" target=\"SYSTEM_OUT\">"
             + "      <PatternLayout charset=\"UTF-8\">\n"
-            + "        <Pattern>%d{yyyy-MM-dd HH:mm:ss,SSS} %p (%t|%tid) [%C{1}.%M():%L] %m%n</Pattern>\n"
+            + "        <Pattern>%d{yyyy-MM-dd HH:mm:ss,SSS} %p (%t|%tid)<!--REPLACED BY LOG FORMAT-->%m%n</Pattern>\n"
             + "      </PatternLayout>\n"
             + "    </Console>"
-            + "    <RollingFile name=\"Sys\" fileName=\"${sys_log_dir}/fe.log\" filePattern=\"${sys_log_dir}/fe.log.${sys_file_pattern}-%i\">\n"
+            + "    <RollingFile name=\"Sys\" fileName=\"${sys_log_dir}/fe.log\" filePattern=\"${sys_log_dir}/fe.log.${sys_file_pattern}-%i${sys_file_postfix}\" immediateFlush=\"${immediate_flush_flag}\">\n"
             + "      <PatternLayout charset=\"UTF-8\">\n"
-            + "        <Pattern>%d{yyyy-MM-dd HH:mm:ss,SSS} %p (%t|%tid) [%C{1}.%M():%L] %m%n</Pattern>\n"
+            + "        <Pattern>%d{yyyy-MM-dd HH:mm:ss,SSS} %p (%t|%tid)<!--REPLACED BY LOG FORMAT-->%m%n</Pattern>\n"
             + "      </PatternLayout>\n"
             + "      <Policies>\n"
             + "        <TimeBasedTriggeringPolicy/>\n"
             + "        <SizeBasedTriggeringPolicy size=\"${sys_roll_maxsize}MB\"/>\n"
             + "      </Policies>\n"
-            + "      <DefaultRolloverStrategy max=\"${sys_roll_num}\" fileIndex=\"min\">\n"
+            + "      <DefaultRolloverStrategy max=\"${sys_roll_num}\" fileIndex=\"max\">\n"
             + "        <Delete basePath=\"${sys_log_dir}/\" maxDepth=\"1\">\n"
             + "          <IfFileName glob=\"fe.log.*\" />\n"
-            + "          <IfLastModified age=\"${sys_log_delete_age}\" />\n"
+            + "          <IfAny>\n"
+            + "             <IfAccumulatedFileSize exceeds=\"${info_sys_accumulated_file_size}GB\"/>\n"
+            + "           </IfAny>\n"
             + "        </Delete>\n"
             + "      </DefaultRolloverStrategy>\n"
             + "    </RollingFile>\n"
-            + "    <RollingFile name=\"SysWF\" fileName=\"${sys_log_dir}/fe.warn.log\" filePattern=\"${sys_log_dir}/fe.warn.log.${sys_file_pattern}-%i\">\n"
+            + "    <RollingFile name=\"SysWF\" fileName=\"${sys_log_dir}/fe.warn.log\" filePattern=\"${sys_log_dir}/fe.warn.log.${sys_file_pattern}-%i${sys_file_postfix}\" immediateFlush=\"${immediate_flush_flag}\">\n"
             + "      <PatternLayout charset=\"UTF-8\">\n"
-            + "        <Pattern>%d{yyyy-MM-dd HH:mm:ss,SSS} %p (%t|%tid) [%C{1}.%M():%L] %m%n</Pattern>\n"
+            + "        <Pattern>%d{yyyy-MM-dd HH:mm:ss,SSS} %p (%t|%tid)<!--REPLACED BY LOG FORMAT-->%m%n</Pattern>\n"
             + "      </PatternLayout>\n"
             + "      <Policies>\n"
             + "        <TimeBasedTriggeringPolicy/>\n"
             + "        <SizeBasedTriggeringPolicy size=\"${sys_roll_maxsize}MB\"/>\n"
             + "      </Policies>\n"
-            + "      <DefaultRolloverStrategy max=\"${sys_roll_num}\" fileIndex=\"min\">\n"
+            + "      <DefaultRolloverStrategy max=\"${sys_roll_num}\" fileIndex=\"max\">\n"
             + "        <Delete basePath=\"${sys_log_dir}/\" maxDepth=\"1\">\n"
             + "          <IfFileName glob=\"fe.warn.log.*\" />\n"
-            + "          <IfLastModified age=\"${sys_log_delete_age}\" />\n"
+            + "          <IfAny>\n"
+            + "             <IfAccumulatedFileSize exceeds=\"${warn_sys_accumulated_file_size}GB\"/>\n"
+            + "          </IfAny>\n"
             + "        </Delete>\n"
             + "      </DefaultRolloverStrategy>\n"
             + "    </RollingFile>\n"
-            + "    <RollingFile name=\"Auditfile\" fileName=\"${audit_log_dir}/fe.audit.log\" filePattern=\"${audit_log_dir}/fe.audit.log.${audit_file_pattern}-%i\">\n"
+            + "    <RollingFile name=\"Auditfile\" fileName=\"${audit_log_dir}/fe.audit.log\" filePattern=\"${audit_log_dir}/fe.audit.log.${audit_file_pattern}-%i${audit_file_postfix}\">\n"
             + "      <PatternLayout charset=\"UTF-8\">\n"
             + "        <Pattern>%d{yyyy-MM-dd HH:mm:ss,SSS} [%c{1}] %m%n</Pattern>\n"
             + "      </PatternLayout>\n"
@@ -85,16 +91,18 @@ public class Log4jConfig extends XmlConfiguration {
             + "        <TimeBasedTriggeringPolicy/>\n"
             + "        <SizeBasedTriggeringPolicy size=\"${audit_roll_maxsize}MB\"/>\n"
             + "      </Policies>\n"
-            + "      <DefaultRolloverStrategy max=\"${sys_roll_num}\" fileIndex=\"min\">\n"
+            + "      <DefaultRolloverStrategy max=\"${audit_roll_num}\" fileIndex=\"max\">\n"
             + "        <Delete basePath=\"${audit_log_dir}/\" maxDepth=\"1\">\n"
             + "          <IfFileName glob=\"fe.audit.log.*\" />\n"
-            + "          <IfLastModified age=\"${audit_log_delete_age}\" />\n"
+            + "          <IfAny>\n"
+            + "             <IfAccumulatedFileSize exceeds=\"${audit_sys_accumulated_file_size}GB\"/>\n"
+            + "          </IfAny>\n"
             + "        </Delete>\n"
             + "      </DefaultRolloverStrategy>\n"
             + "    </RollingFile>\n"
             + "  </Appenders>\n"
             + "  <Loggers>\n"
-            + "    <Root level=\"${sys_log_level}\">\n"
+            + "    <Root level=\"${sys_log_level}\" includeLocation=\"${include_location_flag}\">\n"
             + "      <AppenderRef ref=\"Sys\"/>\n"
             + "      <AppenderRef ref=\"SysWF\" level=\"WARN\"/>\n"
             + "      <!--REPLACED BY Console Logger-->\n"
@@ -109,6 +117,7 @@ public class Log4jConfig extends XmlConfiguration {
 
     private static StrSubstitutor strSub;
     private static String sysLogLevel;
+    private static String sysLogMode;
     private static String[] verboseModules;
     private static String[] auditModules;
     // save the generated xml conf template
@@ -128,15 +137,24 @@ public class Log4jConfig extends XmlConfiguration {
         String newXmlConfTemplate = xmlConfTemplate;
 
         // sys log config
-        String sysLogDir = Config.sys_log_dir;
+        // ATTN, sys_log_dir is deprecated, use LOG_DIR instead
+        String sysLogDir = Strings.isNullOrEmpty(Config.sys_log_dir) ? System.getenv("LOG_DIR") :
+                Config.sys_log_dir;
         String sysRollNum = String.valueOf(Config.sys_log_roll_num);
         String sysDeleteAge = String.valueOf(Config.sys_log_delete_age);
+        boolean compressSysLog = Config.sys_log_enable_compress;
 
         if (!(sysLogLevel.equalsIgnoreCase("INFO")
                 || sysLogLevel.equalsIgnoreCase("WARN")
                 || sysLogLevel.equalsIgnoreCase("ERROR")
                 || sysLogLevel.equalsIgnoreCase("FATAL"))) {
             throw new IOException("sys_log_level config error");
+        }
+
+        if (!(sysLogMode.equalsIgnoreCase("NORMAL")
+                || sysLogMode.equalsIgnoreCase("BRIEF")
+                || sysLogMode.equalsIgnoreCase("ASYNC"))) {
+            throw new IOException("sys_log_mode config error");
         }
 
         String sysLogRollPattern = "%d{yyyyMMdd}";
@@ -155,6 +173,7 @@ public class Log4jConfig extends XmlConfiguration {
         String auditRollNum = String.valueOf(Config.audit_log_roll_num);
         String auditRollMaxSize = String.valueOf(Config.log_roll_size_mb);
         String auditDeleteAge = String.valueOf(Config.audit_log_delete_age);
+        boolean compressAuditLog = Config.audit_log_enable_compress;
         if (Config.audit_log_roll_interval.equals("HOUR")) {
             auditLogRollPattern = "%d{yyyyMMddHH}";
         } else if (Config.audit_log_roll_interval.equals("DAY")) {
@@ -174,12 +193,23 @@ public class Log4jConfig extends XmlConfiguration {
         newXmlConfTemplate = newXmlConfTemplate.replaceAll("<!--REPLACED BY AUDIT AND VERBOSE MODULE NAMES-->",
                 sb.toString());
 
+        if (sysLogMode.equalsIgnoreCase("NORMAL")) {
+            newXmlConfTemplate = newXmlConfTemplate.replaceAll("<!--REPLACED BY LOG FORMAT-->",
+                    " [%C{1}.%M():%L] ");
+        } else {
+            newXmlConfTemplate = newXmlConfTemplate.replaceAll("<!--REPLACED BY LOG FORMAT-->", " ");
+            if (sysLogMode.equalsIgnoreCase("ASYNC")) {
+                newXmlConfTemplate = newXmlConfTemplate.replaceAll("Root", "AsyncRoot");
+            }
+        }
+
         if (foreground) {
             StringBuilder consoleLogger = new StringBuilder();
             consoleLogger.append("<AppenderRef ref=\"Console\"/>\n");
             newXmlConfTemplate = newXmlConfTemplate.replaceAll("<!--REPLACED BY Console Logger-->",
                     consoleLogger.toString());
         }
+
         Map<String, String> properties = Maps.newHashMap();
         properties.put("sys_log_dir", sysLogDir);
         properties.put("sys_file_pattern", sysLogRollPattern);
@@ -187,12 +217,21 @@ public class Log4jConfig extends XmlConfiguration {
         properties.put("sys_roll_num", sysRollNum);
         properties.put("sys_log_delete_age", sysDeleteAge);
         properties.put("sys_log_level", sysLogLevel);
+        properties.put("sys_file_postfix", compressSysLog ? ".gz" : "");
 
         properties.put("audit_log_dir", auditLogDir);
         properties.put("audit_file_pattern", auditLogRollPattern);
         properties.put("audit_roll_maxsize", auditRollMaxSize);
         properties.put("audit_roll_num", auditRollNum);
         properties.put("audit_log_delete_age", auditDeleteAge);
+
+        properties.put("info_sys_accumulated_file_size", String.valueOf(Config.info_sys_accumulated_file_size));
+        properties.put("warn_sys_accumulated_file_size", String.valueOf(Config.warn_sys_accumulated_file_size));
+        properties.put("audit_sys_accumulated_file_size", String.valueOf(Config.audit_sys_accumulated_file_size));
+
+        properties.put("include_location_flag", sysLogMode.equalsIgnoreCase("NORMAL") ? "true" : "false");
+        properties.put("immediate_flush_flag", sysLogMode.equalsIgnoreCase("ASYNC") ? "false" : "true");
+        properties.put("audit_file_postfix", compressAuditLog ? ".gz" : "");
 
         strSub = new StrSubstitutor(new Interpolator(properties));
         newXmlConfTemplate = strSub.replace(newXmlConfTemplate);
@@ -204,27 +243,37 @@ public class Log4jConfig extends XmlConfiguration {
         SpringLog4j2Config.writeSpringLogConf(customConfDir);
 
         // new SimpleLog4jConfiguration with xmlConfTemplate
-        ByteArrayInputStream bis = new ByteArrayInputStream(newXmlConfTemplate.getBytes("UTF-8"));
-        ConfigurationSource source = new ConfigurationSource(bis);
-        Log4jConfig config = new Log4jConfig(source);
+        if (newXmlConfTemplate == null || newXmlConfTemplate.isEmpty()) {
+            throw new IOException("The configuration template is empty!");
+        }
 
-        LoggerContext context = (LoggerContext) LogManager.getContext(false);
-        context.start(config);
+        Log4jConfig config;
+        try (ByteArrayInputStream bis = new ByteArrayInputStream(newXmlConfTemplate.getBytes(StandardCharsets.UTF_8))) {
+            ConfigurationSource source = new ConfigurationSource(bis);
+            config = new Log4jConfig(source);
+
+            LoggerContext context = (LoggerContext) LogManager.getContext(LogManager.class.getClassLoader(), false);
+            context.start(config);
+        } catch (Exception e) {
+            throw new IOException("Error occurred while configuring Log4j", e);
+        }
     }
 
     public static String getLogXmlConfTemplate() {
         return logXmlConfTemplate;
     }
 
-    public static class Tuple<X, Y, Z> {
+    public static class Tuple<X, Y, Z, U> {
         public final X x;
         public final Y y;
         public final Z z;
+        public final U u;
 
-        public Tuple(X x, Y y, Z z) {
+        public Tuple(X x, Y y, Z z, U u) {
             this.x = x;
             this.y = y;
             this.z = z;
+            this.u = u;
         }
     }
 
@@ -239,6 +288,7 @@ public class Log4jConfig extends XmlConfiguration {
 
     public static synchronized void initLogging(String dorisConfDir) throws IOException {
         sysLogLevel = Config.sys_log_level;
+        sysLogMode = Config.sys_log_mode;
         verboseModules = Config.sys_log_verbose_modules;
         auditModules = Config.audit_log_modules;
         confDir = dorisConfDir;
@@ -246,11 +296,15 @@ public class Log4jConfig extends XmlConfiguration {
         reconfig();
     }
 
-    public static synchronized Tuple<String, String[], String[]> updateLogging(
-            String level, String[] verboseNames, String[] auditNames) throws IOException {
+    public static synchronized Tuple<String, String, String[], String[]> updateLogging(
+            String level, String mode, String[] verboseNames, String[] auditNames) throws IOException {
         boolean toReconfig = false;
         if (level != null) {
             sysLogLevel = level;
+            toReconfig = true;
+        }
+        if (mode != null) {
+            sysLogMode = mode;
             toReconfig = true;
         }
         if (verboseNames != null) {
@@ -264,6 +318,6 @@ public class Log4jConfig extends XmlConfiguration {
         if (toReconfig) {
             reconfig();
         }
-        return new Tuple<>(sysLogLevel, verboseModules, auditModules);
+        return new Tuple<>(sysLogLevel, sysLogMode, verboseModules, auditModules);
     }
 }

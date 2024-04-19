@@ -21,6 +21,7 @@ import org.apache.doris.analysis.CreateFileStmt;
 import org.apache.doris.analysis.DropFileStmt;
 import org.apache.doris.catalog.Database;
 import org.apache.doris.catalog.Env;
+import org.apache.doris.cloud.security.SecurityChecker;
 import org.apache.doris.common.Config;
 import org.apache.doris.common.DdlException;
 import org.apache.doris.common.io.Text;
@@ -49,7 +50,6 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -289,6 +289,7 @@ public class SmallFileMgr implements Writable {
     private SmallFile downloadAndCheck(long dbId, String catalog, String fileName,
             String downloadUrl, String md5sum, boolean saveContent) throws DdlException {
         try {
+            SecurityChecker.getInstance().startSSRFChecking(downloadUrl);
             URL url = new URL(downloadUrl);
             // get file length
             URLConnection urlConnection = url.openConnection();
@@ -366,13 +367,15 @@ public class SmallFileMgr implements Writable {
                         checksum, false /* not content */);
             }
             return smallFile;
-        } catch (IOException | NoSuchAlgorithmException e) {
+        } catch (Exception e) {
             LOG.warn("failed to get file from url: {}", downloadUrl, e);
             String errorMsg = e.getMessage();
             if (e instanceof FileNotFoundException) {
                 errorMsg = "File not found";
             }
             throw new DdlException("Failed to get file from url: " + downloadUrl + ". Error: " + errorMsg);
+        } finally {
+            SecurityChecker.getInstance().stopSSRFChecking();
         }
     }
 
@@ -418,10 +421,10 @@ public class SmallFileMgr implements Writable {
             }
             file.createNewFile();
             byte[] decoded = Base64.getDecoder().decode(smallFile.content);
-            FileOutputStream outputStream = new FileOutputStream(file);
-            outputStream.write(decoded);
-            outputStream.flush();
-            outputStream.close();
+            try (FileOutputStream outputStream = new FileOutputStream(file)) {
+                outputStream.write(decoded);
+                outputStream.flush();
+            }
 
             if (!checkMd5(file, smallFile.md5)) {
                 throw new DdlException("write file " + fileName
@@ -436,9 +439,9 @@ public class SmallFileMgr implements Writable {
     }
 
     private boolean checkMd5(File file, String expectedMd5) throws DdlException {
-        String md5sum = null;
-        try {
-            md5sum = DigestUtils.md5Hex(new FileInputStream(file));
+        String md5sum;
+        try (FileInputStream fis = new FileInputStream(file)) {
+            md5sum = DigestUtils.md5Hex(fis);
         } catch (FileNotFoundException e) {
             throw new DdlException("File " + file.getName() + " does not exist");
         } catch (IOException e) {
@@ -506,8 +509,7 @@ public class SmallFileMgr implements Writable {
             try {
                 smallFiles.addFile(smallFile.name, smallFile);
             } catch (DdlException e) {
-                // should not happen
-                e.printStackTrace();
+                LOG.warn("should not happen", e);
             }
         }
     }

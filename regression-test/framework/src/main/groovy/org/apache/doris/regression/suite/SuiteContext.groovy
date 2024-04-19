@@ -17,6 +17,7 @@
 
 package org.apache.doris.regression.suite
 
+import com.google.common.collect.Maps
 import groovy.transform.CompileStatic
 import org.apache.doris.regression.Config
 import org.apache.doris.regression.util.OutputUtils
@@ -28,6 +29,12 @@ import java.sql.DriverManager
 import java.util.concurrent.ExecutorService
 import java.util.function.Function
 
+class ConnectionInfo {
+    Connection conn
+    String username
+    String password
+}
+
 @Slf4j
 @CompileStatic
 class SuiteContext implements Closeable {
@@ -35,12 +42,18 @@ class SuiteContext implements Closeable {
     public final String suiteName
     public final String group
     public final String dbName
-    public final ThreadLocal<Connection> threadLocalConn = new ThreadLocal<>()
+    public final ThreadLocal<ConnectionInfo> threadLocalConn = new ThreadLocal<>()
+    public final ThreadLocal<ConnectionInfo> threadArrowFlightSqlConn = new ThreadLocal<>()
+    public final ThreadLocal<Connection> threadHiveDockerConn = new ThreadLocal<>()
+    public final ThreadLocal<Connection> threadHiveRemoteConn = new ThreadLocal<>()
+    public final ThreadLocal<Connection> threadDB2DockerConn = new ThreadLocal<>()
+    private final ThreadLocal<Syncer> syncer = new ThreadLocal<>()
     public final Config config
     public final File dataPath
     public final File outputFile
     public final File realOutputFile
     public final ScriptContext scriptContext
+    public final SuiteCluster cluster
     public final String flowName
     public final String flowId
     public final ThreadLocal<OutputUtils.OutputBlocksIterator> threadLocalOutputIterator = new ThreadLocal<>()
@@ -52,13 +65,14 @@ class SuiteContext implements Closeable {
     private long finishTime
     private volatile Throwable throwable
 
-    SuiteContext(File file, String suiteName, String group, ScriptContext scriptContext,
+    SuiteContext(File file, String suiteName, String group, ScriptContext scriptContext, SuiteCluster cluster,
                  ExecutorService suiteExecutors, ExecutorService actionExecutors, Config config) {
         this.file = file
         this.suiteName = suiteName
         this.group = group
         this.config = config
         this.scriptContext = scriptContext
+        this.cluster = cluster
 
         String packageName = getPackageName()
         String className = getClassName()
@@ -69,7 +83,6 @@ class SuiteContext implements Closeable {
 
         def path = new File(config.suitePath).relativePath(file)
         def realPath = new File(config.suitePath).relativePath(file)
-        def sf1DataPath = config.sf1DataPath
         def outputRelativePath = path.substring(0, path.lastIndexOf(".")) + ".out"
         def realOutputRelativePath = path.substring(0, realPath.lastIndexOf(".")) + ".out"
         this.outputFile = new File(new File(config.dataPath), outputRelativePath)
@@ -103,18 +116,165 @@ class SuiteContext implements Closeable {
         return className
     }
 
+    Syncer getSyncer(Suite suite) {
+        Syncer syncerImpl = syncer.get()
+        if (syncerImpl == null) {
+            syncerImpl = new Syncer(suite, config)
+            syncer.set(syncerImpl)
+        }
+        return syncerImpl
+    }
+
     // compatible to context.conn
     Connection getConn() {
         return getConnection()
     }
 
+    boolean useArrowFlightSql() {
+        if (group.contains("arrow_flight_sql") && config.groups.contains("arrow_flight_sql")) {
+            return true
+        }
+        return false
+    }
+
+    // jdbc:mysql
     Connection getConnection() {
-        def threadConn = threadLocalConn.get()
+        def threadConnInfo = threadLocalConn.get()
+        if (threadConnInfo == null) {
+            threadConnInfo = new ConnectionInfo()
+            threadConnInfo.conn = config.getConnectionByDbName(dbName)
+            threadConnInfo.username = config.jdbcUser
+            threadConnInfo.password = config.jdbcPassword
+            threadLocalConn.set(threadConnInfo)
+        }
+        return threadConnInfo.conn
+    }
+
+    Connection getArrowFlightSqlConnection(){
+        def threadConnInfo = threadArrowFlightSqlConn.get()
+        if (threadConnInfo == null) {
+            threadConnInfo = new ConnectionInfo()
+            threadConnInfo.conn = config.getConnectionByArrowFlightSql(dbName)
+            threadConnInfo.username = config.jdbcUser
+            threadConnInfo.password = config.jdbcPassword
+            threadArrowFlightSqlConn.set(threadConnInfo)
+        }
+        println("Use arrow flight sql connection")
+        return threadConnInfo.conn
+    }
+
+    Connection getHiveDockerConnection(){
+        def threadConn = threadHiveDockerConn.get()
         if (threadConn == null) {
-            threadConn = config.getConnectionByDbName(dbName)
-            threadLocalConn.set(threadConn)
+            threadConn = getConnectionByHiveDockerConfig()
+            threadHiveDockerConn.set(threadConn)
         }
         return threadConn
+    }
+
+    Connection getHiveRemoteConnection(){
+        def threadConn = threadHiveRemoteConn.get()
+        if (threadConn == null) {
+            threadConn = getConnectionByHiveRemoteConfig()
+            threadHiveRemoteConn.set(threadConn)
+        }
+        return threadConn
+    }
+
+    Connection getDB2DockerConnection(){
+        def threadConn = threadDB2DockerConn.get()
+        if (threadConn == null) {
+            threadConn = getConnectionByDB2DockerConfig()
+            threadDB2DockerConn.set(threadConn)
+        }
+        return threadConn
+    }
+
+    private String getJdbcNetInfo() {
+        String subJdbc = config.jdbcUrl.substring(config.jdbcUrl.indexOf("://") + 3)
+        return subJdbc.substring(0, subJdbc.indexOf("/"))
+    }
+
+    private String getDownstreamJdbcNetInfo() {
+        String subJdbc = config.ccrDownstreamUrl.substring(config.ccrDownstreamUrl.indexOf("://") + 3)
+        return subJdbc.substring(0, subJdbc.indexOf("/"))
+    }
+
+    private Map<String, String> getSpec(String[] jdbc) {
+        Map<String, String> spec = Maps.newHashMap()
+
+        spec.put("host", jdbc[0])
+        spec.put("port", jdbc[1])
+        spec.put("user", config.feSyncerUser)
+        spec.put("password", config.feSyncerPassword)
+        spec.put("cluster", "")
+
+        return spec
+    }
+
+    Map<String, String> getSrcSpec() {
+        String[] jdbc = getJdbcNetInfo().split(":")
+        Map<String, String> spec = getSpec(jdbc)
+        spec.put("thrift_port", config.feSourceThriftNetworkAddress.port.toString())
+        spec.put("database", dbName)
+
+        return spec
+    }
+
+    Map<String, String> getDestSpec() {
+        String[] jdbc = getDownstreamJdbcNetInfo().split(":")
+        Map<String, String> spec = getSpec(jdbc)
+        spec.put("thrift_port", config.feTargetThriftNetworkAddress.port.toString())
+        spec.put("database", "TEST_" + dbName)
+
+        return spec
+    }
+
+    Connection getConnectionByHiveDockerConfig() {
+        Class.forName("org.apache.hive.jdbc.HiveDriver");
+        String hiveHost = config.otherConfigs.get("externalEnvIp")
+        String hivePort = config.otherConfigs.get("hiveServerPort")
+        String hiveJdbcUrl = "jdbc:hive2://${hiveHost}:${hivePort}/default"
+        String hiveJdbcUser =  "hadoop"
+        String hiveJdbcPassword = "hadoop"
+        return DriverManager.getConnection(hiveJdbcUrl, hiveJdbcUser, hiveJdbcPassword)
+    }
+
+    Connection getConnectionByHiveRemoteConfig() {
+        Class.forName("org.apache.hive.jdbc.HiveDriver");
+        String hiveHost = config.otherConfigs.get("extHiveHmsHost")
+        String hivePort = config.otherConfigs.get("extHiveServerPort")
+        String hiveJdbcUrl = "jdbc:hive2://${hiveHost}:${hivePort}/default"
+        String hiveJdbcUser =  "hadoop"
+        String hiveJdbcPassword = "hadoop"
+        return DriverManager.getConnection(hiveJdbcUrl, hiveJdbcUser, hiveJdbcPassword)
+    }
+
+    Connection getConnectionByDB2DockerConfig() {
+        Class.forName("com.ibm.db2.jcc.DB2Driver");
+        String db2Host = config.otherConfigs.get("externalEnvIp")
+        String db2Port = config.otherConfigs.get("db2_11_port")
+        String db2JdbcUrl = "jdbc:db2://${db2Host}:${db2Port}/doris"
+        String db2JdbcUser =  "db2inst1"
+        String db2JdbcPassword = "123456"
+        return DriverManager.getConnection(db2JdbcUrl, db2JdbcUser, db2JdbcPassword)
+    }
+
+    Connection getTargetConnection(Suite suite) {
+        def context = getSyncer(suite).context
+        if (context.targetConnection == null) {
+            context.targetConnection = config.getDownstreamConnectionByDbName("TEST_" + dbName)
+        }
+        return context.targetConnection
+    }
+
+    InetSocketAddress getFeHttpAddress() {
+        if (cluster.isRunning()) {
+            def fe = cluster.getMasterFe()
+            return new InetSocketAddress(fe.host, fe.httpPort)
+        } else {
+            return config.feHttpInetSocketAddress
+        }
     }
 
     public <T> T connect(String user, String password, String url, Closure<T> actionSupplier) {
@@ -122,7 +282,11 @@ class SuiteContext implements Closeable {
         try {
             log.info("Create new connection for user '${user}'")
             return DriverManager.getConnection(url, user, password).withCloseable { newConn ->
-                threadLocalConn.set(newConn)
+                def newConnInfo = new ConnectionInfo()
+                newConnInfo.conn = newConn
+                newConnInfo.username = user
+                newConnInfo.password = password
+                threadLocalConn.set(newConnInfo)
                 return actionSupplier.call()
             }
         } finally {
@@ -133,6 +297,32 @@ class SuiteContext implements Closeable {
                 threadLocalConn.set(originConnection)
             }
         }
+    }
+
+    public void reconnectFe() {
+        ConnectionInfo connInfo = threadLocalConn.get()
+        if (connInfo == null) {
+            return
+        }
+        connectTo(connInfo.conn.getMetaData().getURL(), connInfo.username, connInfo.password);
+    }
+
+    public void connectTo(String url, String username, String password) {
+        ConnectionInfo oldConn = threadLocalConn.get()
+        if (oldConn != null) {
+            threadLocalConn.remove()
+            try {
+                oldConn.conn.close()
+            } catch (Throwable t) {
+                log.warn("Close connection failed", t)
+            }
+        }
+
+        def newConnInfo = new ConnectionInfo()
+        newConnInfo.conn = DriverManager.getConnection(url, username, password)
+        newConnInfo.username = username
+        newConnInfo.password = password
+        threadLocalConn.set(newConnInfo)
     }
 
     OutputUtils.OutputBlocksIterator getOutputIterator() {
@@ -207,15 +397,60 @@ class SuiteContext implements Closeable {
             }
         }
 
-        Connection conn = threadLocalConn.get()
+        Syncer syncerImpl = syncer.get()
+        if (syncerImpl != null) {
+            syncer.remove()
+            SyncerContext context = syncerImpl.getContext()
+            if (context != null) {
+                try {
+                    syncerImpl.context.closeAllClients()
+                    syncerImpl.context.closeConn()
+                } catch (Throwable t) {
+                    log.warn("Close syncer failed", t)
+                }
+            }
+        }
+
+        ConnectionInfo conn = threadLocalConn.get()
         if (conn != null) {
             threadLocalConn.remove()
             try {
-                conn.close()
+                conn.conn.close()
             } catch (Throwable t) {
                 log.warn("Close connection failed", t)
             }
         }
+
+        ConnectionInfo arrow_flight_sql_conn = threadArrowFlightSqlConn.get()
+        if (arrow_flight_sql_conn != null) {
+            threadArrowFlightSqlConn.remove()
+            try {
+                arrow_flight_sql_conn.conn.close()
+            } catch (Throwable t) {
+                log.warn("Close connection failed", t)
+            }
+        }
+
+        Connection hive_docker_conn = threadHiveDockerConn.get()
+        if (hive_docker_conn != null) {
+            threadHiveDockerConn.remove()
+            try {
+                hive_docker_conn.close()
+            } catch (Throwable t) {
+                log.warn("Close connection failed", t)
+            }
+        }
+        
+        Connection hive_remote_conn = threadHiveRemoteConn.get()
+        if (hive_remote_conn != null) {
+            threadHiveRemoteConn.remove()
+            try {
+                hive_remote_conn.close()
+            } catch (Throwable t) {
+                log.warn("Close connection failed", t)
+            }
+        }
+        
     }
 
     public <T> T start(Function<SuiteContext, T> func) {

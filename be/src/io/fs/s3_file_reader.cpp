@@ -17,28 +17,67 @@
 
 #include "io/fs/s3_file_reader.h"
 
+#include <aws/core/http/URI.h>
+#include <aws/core/utils/Outcome.h>
 #include <aws/s3/S3Client.h>
+#include <aws/s3/S3Errors.h>
 #include <aws/s3/model/GetObjectRequest.h>
+#include <aws/s3/model/GetObjectResult.h>
+#include <bvar/reducer.h>
+#include <fmt/format.h>
+#include <glog/logging.h>
 
+#include <algorithm>
+#include <utility>
+
+#include "common/compiler_util.h" // IWYU pragma: keep
+#include "io/fs/err_utils.h"
 #include "io/fs/s3_common.h"
+#include "util/bvar_helper.h"
 #include "util/doris_metrics.h"
+#include "util/s3_util.h"
 
-namespace doris {
-namespace io {
+namespace doris::io {
 
-S3FileReader::S3FileReader(Path path, size_t file_size, std::string key, std::string bucket,
-                           S3FileSystem* fs)
-        : _path(std::move(path)),
+bvar::Adder<uint64_t> s3_file_reader_read_counter("s3_file_reader", "read_at");
+bvar::Adder<uint64_t> s3_file_reader_total("s3_file_reader", "total_num");
+bvar::Adder<uint64_t> s3_bytes_read_total("s3_file_reader", "bytes_read");
+bvar::Adder<uint64_t> s3_file_being_read("s3_file_reader", "file_being_read");
+
+Result<FileReaderSPtr> S3FileReader::create(std::shared_ptr<const S3ClientHolder> client,
+                                            std::string bucket, std::string key,
+                                            int64_t file_size) {
+    if (file_size < 0) {
+        auto res = client->object_file_size(bucket, key);
+        if (!res.has_value()) {
+            return ResultError(std::move(res.error()));
+        }
+
+        file_size = res.value();
+    }
+
+    return std::make_shared<S3FileReader>(std::move(client), std::move(bucket), std::move(key),
+                                          file_size);
+}
+
+S3FileReader::S3FileReader(std::shared_ptr<const S3ClientHolder> client, std::string bucket,
+                           std::string key, size_t file_size)
+        : _path(fmt::format("s3://{}/{}", bucket, key)),
           _file_size(file_size),
-          _fs(fs),
           _bucket(std::move(bucket)),
-          _key(std::move(key)) {
+          _key(std::move(key)),
+          _client(std::move(client)) {
     DorisMetrics::instance()->s3_file_open_reading->increment(1);
     DorisMetrics::instance()->s3_file_reader_total->increment(1);
+    s3_file_reader_total << 1;
+    s3_file_being_read << 1;
+
+    Aws::Http::SetCompliantRfc3986Encoding(true);
 }
 
 S3FileReader::~S3FileReader() {
-    close();
+    static_cast<void>(close());
+    s3_file_being_read << -1;
 }
 
 Status S3FileReader::close() {
@@ -49,11 +88,13 @@ Status S3FileReader::close() {
     return Status::OK();
 }
 
-Status S3FileReader::read_at(size_t offset, Slice result, size_t* bytes_read) {
+Status S3FileReader::read_at_impl(size_t offset, Slice result, size_t* bytes_read,
+                                  const IOContext* /*io_ctx*/) {
     DCHECK(!closed());
     if (offset > _file_size) {
-        return Status::IOError("offset exceeds file size(offset: {}, file size: {}, path: {})",
-                               offset, _file_size, _path.native());
+        return Status::InternalError(
+                "offset exceeds file size(offset: {}, file size: {}, path: {})", offset, _file_size,
+                _path.native());
     }
     size_t bytes_req = result.size;
     char* to = result.data;
@@ -68,23 +109,25 @@ Status S3FileReader::read_at(size_t offset, Slice result, size_t* bytes_read) {
     request.SetRange(fmt::format("bytes={}-{}", offset, offset + bytes_req - 1));
     request.SetResponseStreamFactory(AwsWriteableStreamFactory(to, bytes_req));
 
-    auto client = _fs->get_client();
+    auto client = _client->get();
     if (!client) {
         return Status::InternalError("init s3 client error");
     }
+    SCOPED_BVAR_LATENCY(s3_bvar::s3_get_latency);
     auto outcome = client->GetObject(request);
     if (!outcome.IsSuccess()) {
-        return Status::IOError("failed to read from {}: {}", _path.native(),
-                               outcome.GetError().GetMessage());
+        return s3fs_error(outcome.GetError(),
+                          fmt::format("failed to read from {}", _path.native()));
     }
     *bytes_read = outcome.GetResult().GetContentLength();
     if (*bytes_read != bytes_req) {
-        return Status::IOError("failed to read from {}(bytes read: {}, bytes req: {})",
-                               _path.native(), *bytes_read, bytes_req);
+        return Status::InternalError("failed to read from {}(bytes read: {}, bytes req: {})",
+                                     _path.native(), *bytes_read, bytes_req);
     }
+    s3_bytes_read_total << *bytes_read;
+    s3_file_reader_read_counter << 1;
     DorisMetrics::instance()->s3_bytes_read_total->increment(*bytes_read);
     return Status::OK();
 }
 
-} // namespace io
-} // namespace doris
+} // namespace doris::io

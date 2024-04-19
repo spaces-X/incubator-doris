@@ -34,12 +34,15 @@ public class ShowRolesStmt extends ShowStmt {
         ShowResultSetMetaData.Builder builder = ShowResultSetMetaData.builder();
 
         builder.addColumn(new Column("Name", ScalarType.createVarchar(100)));
+        builder.addColumn(new Column("Comment", ScalarType.createVarchar(100)));
         builder.addColumn(new Column("Users", ScalarType.createVarchar(100)));
         builder.addColumn(new Column("GlobalPrivs", ScalarType.createVarchar(300)));
         builder.addColumn(new Column("CatalogPrivs", ScalarType.createVarchar(300)));
         builder.addColumn(new Column("DatabasePrivs", ScalarType.createVarchar(300)));
         builder.addColumn(new Column("TablePrivs", ScalarType.createVarchar(300)));
         builder.addColumn(new Column("ResourcePrivs", ScalarType.createVarchar(300)));
+        builder.addColumn(new Column("CloudClusterPrivs", ScalarType.createVarchar(300)));
+        builder.addColumn(new Column("CloudStagePrivs", ScalarType.createVarchar(300)));
 
         META_DATA = builder.build();
     }
@@ -50,7 +53,7 @@ public class ShowRolesStmt extends ShowStmt {
 
     @Override
     public void analyze(Analyzer analyzer) throws AnalysisException {
-        if (!Env.getCurrentEnv().getAuth().checkGlobalPriv(ConnectContext.get(), PrivPredicate.GRANT)) {
+        if (!Env.getCurrentEnv().getAccessManager().checkGlobalPriv(ConnectContext.get(), PrivPredicate.GRANT)) {
             ErrorReport.reportAnalysisException(ErrorCode.ERR_SPECIFIC_ACCESS_DENIED_ERROR, "GRANT");
         }
     }

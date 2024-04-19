@@ -17,12 +17,20 @@
 
 package org.apache.doris.qe;
 
+import org.apache.doris.catalog.Env;
 import org.apache.doris.common.Config;
+import org.apache.doris.common.Status;
 import org.apache.doris.common.ThreadPoolManager;
 import org.apache.doris.common.UserException;
+import org.apache.doris.common.profile.ExecutionProfile;
 import org.apache.doris.common.util.DebugUtil;
-import org.apache.doris.common.util.ProfileWriter;
+import org.apache.doris.common.util.ProfileManager;
+import org.apache.doris.metric.MetricRepo;
+import org.apache.doris.resource.workloadgroup.QueueToken.TokenState;
+import org.apache.doris.system.Backend;
 import org.apache.doris.thrift.TNetworkAddress;
+import org.apache.doris.thrift.TQueryProfile;
+import org.apache.doris.thrift.TQueryType;
 import org.apache.doris.thrift.TReportExecStatusParams;
 import org.apache.doris.thrift.TReportExecStatusResult;
 import org.apache.doris.thrift.TStatus;
@@ -34,7 +42,10 @@ import com.google.common.collect.Maps;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -46,6 +57,7 @@ public final class QeProcessorImpl implements QeProcessor {
 
     private Map<TUniqueId, Integer> queryToInstancesNum;
     private Map<String, AtomicInteger> userToInstancesCount;
+    private ExecutorService writeProfileExecutor;
 
     public static final QeProcessor INSTANCE;
 
@@ -53,15 +65,34 @@ public final class QeProcessorImpl implements QeProcessor {
         INSTANCE = new QeProcessorImpl();
     }
 
-    private ExecutorService writeProfileExecutor;
-
     private QeProcessorImpl() {
         coordinatorMap = new ConcurrentHashMap<>();
-        // write profile to ProfileManager when query is running.
-        writeProfileExecutor = ThreadPoolManager.newDaemonProfileThreadPool(1, 100,
-                "profile-write-pool", true);
         queryToInstancesNum = new ConcurrentHashMap<>();
         userToInstancesCount = new ConcurrentHashMap<>();
+        // write profile to ProfileManager when query is running.
+        writeProfileExecutor = ThreadPoolManager.newDaemonProfileThreadPool(3, 100,
+                "profile-write-pool", true);
+    }
+
+    private Status processQueryProfile(TQueryProfile profile, TNetworkAddress address) {
+        LOG.info("New profile processing API, query {}", DebugUtil.printId(profile.query_id));
+
+        ExecutionProfile executionProfile = ProfileManager.getInstance().getExecutionProfile(profile.query_id);
+        if (executionProfile == null) {
+            LOG.warn("Could not find execution profile with query id {}", DebugUtil.printId(profile.query_id));
+            return new Status(TStatusCode.NOT_FOUND, "Could not find execution profile with query id "
+                    + DebugUtil.printId(profile.query_id));
+        }
+
+        // Update profile may cost a lot of time, use a seperate pool to deal with it.
+        writeProfileExecutor.submit(new Runnable() {
+            @Override
+            public void run() {
+                executionProfile.updateProfile(profile, address);
+            }
+        });
+
+        return Status.OK;
     }
 
     @Override
@@ -74,8 +105,13 @@ public final class QeProcessorImpl implements QeProcessor {
     }
 
     @Override
-    public void registerQuery(TUniqueId queryId, Coordinator coord) throws UserException {
-        registerQuery(queryId, new QueryInfo(coord));
+    public List<Coordinator> getAllCoordinators() {
+        List<Coordinator> res = new ArrayList<>();
+
+        for (QueryInfo co : coordinatorMap.values()) {
+            res.add(co.coord);
+        }
+        return res;
     }
 
     @Override
@@ -87,6 +123,10 @@ public final class QeProcessorImpl implements QeProcessor {
         if (result != null) {
             throw new UserException("queryId " + queryId + " already exists");
         }
+
+        // Should add the execution profile to profile manager, BE will report the profile to FE and FE
+        // will update it in ProfileManager
+        ProfileManager.getInstance().addExecutionProfile(info.getCoord().getExecutionProfile());
     }
 
     @Override
@@ -113,6 +153,7 @@ public final class QeProcessorImpl implements QeProcessor {
             }
             queryToInstancesNum.put(queryId, instancesNum);
             userToInstancesCount.computeIfAbsent(user, ignored -> new AtomicInteger(0)).addAndGet(instancesNum);
+            MetricRepo.USER_COUNTER_QUERY_INSTANCE_BEGIN.getOrAdd(user).increase(instancesNum.longValue());
         }
     }
 
@@ -125,7 +166,19 @@ public final class QeProcessorImpl implements QeProcessor {
         QueryInfo queryInfo = coordinatorMap.remove(queryId);
         if (queryInfo != null) {
             if (LOG.isDebugEnabled()) {
-                LOG.debug("deregister query id {}", DebugUtil.printId(queryId));
+                LOG.debug("Deregister query id {}", DebugUtil.printId(queryId));
+            }
+            ExecutionProfile executionProfile = ProfileManager.getInstance().getExecutionProfile(queryId);
+            if (executionProfile != null) {
+                executionProfile.setQueryFinishTime(System.currentTimeMillis());
+                if (queryInfo.connectContext != null) {
+                    long autoProfileThresholdMs = queryInfo.connectContext
+                            .getSessionVariable().getAutoProfileThresholdMs();
+                    if (autoProfileThresholdMs > 0 && System.currentTimeMillis() - queryInfo.getStartExecTime()
+                            < autoProfileThresholdMs) {
+                        ProfileManager.getInstance().removeProfile(executionProfile.getSummaryProfile().getProfileId());
+                    }
+                }
             }
             if (queryInfo.getConnectContext() != null
                     && !Strings.isNullOrEmpty(queryInfo.getConnectContext().getQualifiedUser())
@@ -148,6 +201,9 @@ public final class QeProcessorImpl implements QeProcessor {
                 LOG.debug("not found query {} when unregisterQuery", DebugUtil.printId(queryId));
             }
         }
+
+        // commit hive tranaction if needed
+        Env.getCurrentHiveTransactionMgr().deregister(DebugUtil.printId(queryId));
     }
 
     @Override
@@ -160,15 +216,12 @@ public final class QeProcessorImpl implements QeProcessor {
                 continue;
             }
             final String queryIdStr = DebugUtil.printId(info.getConnectContext().queryId());
-            final QueryStatisticsItem item = new QueryStatisticsItem.Builder()
-                    .queryId(queryIdStr)
-                    .queryStartTime(info.getStartExecTime())
-                    .sql(info.getSql())
-                    .user(context.getQualifiedUser())
-                    .connId(String.valueOf(context.getConnectionId()))
-                    .db(context.getDatabase())
+            final QueryStatisticsItem item = new QueryStatisticsItem.Builder().queryId(queryIdStr)
+                    .queryStartTime(info.getStartExecTime()).sql(info.getSql()).user(context.getQualifiedUser())
+                    .connId(String.valueOf(context.getConnectionId())).db(context.getDatabase())
+                    .catalog(context.getDefaultCatalog())
                     .fragmentInstanceInfos(info.getCoord().getFragmentInstanceInfos())
-                    .profile(info.getCoord().getQueryProfile())
+                    .profile(info.getCoord().getExecutionProfile().getRoot())
                     .isReportSucc(context.getSessionVariable().enableProfile()).build();
             querySet.put(queryIdStr, item);
         }
@@ -177,26 +230,63 @@ public final class QeProcessorImpl implements QeProcessor {
 
     @Override
     public TReportExecStatusResult reportExecStatus(TReportExecStatusParams params, TNetworkAddress beAddr) {
-        if (params.isSetProfile()) {
+        if (params.isSetQueryProfile()) {
+            if (params.isSetBackendId()) {
+                Backend backend = Env.getCurrentSystemInfo().getBackend(params.getBackendId());
+                if (backend != null) {
+                    processQueryProfile(params.getQueryProfile(), backend.getHeartbeatAddress());
+                }
+            }
+        }
+
+        if (params.isSetProfile() || params.isSetLoadChannelProfile()) {
             LOG.info("ReportExecStatus(): fragment_instance_id={}, query id={}, backend num: {}, ip: {}",
                     DebugUtil.printId(params.fragment_instance_id), DebugUtil.printId(params.query_id),
                     params.backend_num, beAddr);
-            LOG.debug("params: {}", params);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("params: {}", params);
+            }
+            ExecutionProfile executionProfile = ProfileManager.getInstance().getExecutionProfile(params.query_id);
+            if (executionProfile != null) {
+                // Update profile may cost a lot of time, use a seperate pool to deal with it.
+                writeProfileExecutor.submit(new Runnable() {
+                    @Override
+                    public void run() {
+                        executionProfile.updateProfile(params);
+                    }
+                });
+            } else {
+                LOG.info("Could not find execution profile with query id {}", DebugUtil.printId(params.query_id));
+            }
         }
         final TReportExecStatusResult result = new TReportExecStatusResult();
+
+        if (params.isSetReportWorkloadRuntimeStatus()) {
+            Env.getCurrentEnv().getWorkloadRuntimeStatusMgr().updateBeQueryStats(params.report_workload_runtime_status);
+            if (!params.isSetQueryId()) {
+                result.setStatus(new TStatus(TStatusCode.OK));
+                return result;
+            }
+        }
+
         final QueryInfo info = coordinatorMap.get(params.query_id);
+
         if (info == null) {
-            result.setStatus(new TStatus(TStatusCode.RUNTIME_ERROR));
-            LOG.info("ReportExecStatus() runtime error, query {} does not exist", DebugUtil.printId(params.query_id));
+            // There is no QueryInfo for StreamLoad, so we return OK
+            if (params.query_type == TQueryType.LOAD) {
+                result.setStatus(new TStatus(TStatusCode.OK));
+            } else {
+                result.setStatus(new TStatus(TStatusCode.RUNTIME_ERROR));
+            }
+            LOG.warn("ReportExecStatus() runtime error, query {} with type {} does not exist",
+                    DebugUtil.printId(params.query_id), params.query_type);
             return result;
         }
         try {
             info.getCoord().updateFragmentExecStatus(params);
-            if (info.getCoord().getProfileWriter() != null && params.isSetProfile()) {
-                writeProfileExecutor.submit(new WriteProfileTask(params));
-            }
         } catch (Exception e) {
-            LOG.warn(e.getMessage());
+            LOG.warn("Exception during handle report, response: {}, query: {}, instance: {}", result.toString(),
+                    DebugUtil.printId(params.query_id), DebugUtil.printId(params.fragment_instance_id), e);
             return result;
         }
         result.setStatus(new TStatus(TStatusCode.OK));
@@ -212,11 +302,23 @@ public final class QeProcessorImpl implements QeProcessor {
         return "";
     }
 
+    public Map<String, QueryInfo> getQueryInfoMap() {
+        Map<String, QueryInfo> retQueryInfoMap = Maps.newHashMap();
+        Set<TUniqueId> queryIdSet = coordinatorMap.keySet();
+        for (TUniqueId qid : queryIdSet) {
+            QueryInfo queryInfo = coordinatorMap.get(qid);
+            if (queryInfo != null) {
+                retQueryInfoMap.put(DebugUtil.printId(qid), queryInfo);
+            }
+        }
+        return retQueryInfoMap;
+    }
+
     public static final class QueryInfo {
         private final ConnectContext connectContext;
         private final Coordinator coord;
         private final String sql;
-        private final long startExecTime;
+        private long registerTimeMs = 0L;
 
         // from Export, Pull load, Insert
         public QueryInfo(Coordinator coord) {
@@ -228,7 +330,7 @@ public final class QeProcessorImpl implements QeProcessor {
             this.connectContext = connectContext;
             this.coord = coord;
             this.sql = sql;
-            this.startExecTime = System.currentTimeMillis();
+            this.registerTimeMs = System.currentTimeMillis();
         }
 
         public ConnectContext getConnectContext() {
@@ -244,28 +346,31 @@ public final class QeProcessorImpl implements QeProcessor {
         }
 
         public long getStartExecTime() {
-            return startExecTime;
-        }
-    }
-
-    private class WriteProfileTask implements Runnable {
-        private TReportExecStatusParams params;
-
-        WriteProfileTask(TReportExecStatusParams params) {
-            this.params = params;
+            if (coord.getQueueToken() != null) {
+                return coord.getQueueToken().getQueueEndTime();
+            }
+            return registerTimeMs;
         }
 
-        @Override
-        public void run() {
-            QueryInfo info = coordinatorMap.get(params.query_id);
-            if (info == null) {
-                return;
+        public long getQueueStartTime() {
+            if (coord.getQueueToken() != null) {
+                return coord.getQueueToken().getQueueStartTime();
             }
+            return -1;
+        }
 
-            ProfileWriter profileWriter = info.getCoord().getProfileWriter();
-            if (profileWriter != null) {
-                profileWriter.writeProfile(false);
+        public long getQueueEndTime() {
+            if (coord.getQueueToken() != null) {
+                return coord.getQueueToken().getQueueEndTime();
             }
+            return -1;
+        }
+
+        public TokenState getQueueStatus() {
+            if (coord.getQueueToken() != null) {
+                return coord.getQueueToken().getTokenState();
+            }
+            return null;
         }
     }
 }

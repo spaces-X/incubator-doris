@@ -18,7 +18,6 @@
 package org.apache.doris.catalog;
 
 import org.apache.doris.catalog.MaterializedIndex.IndexExtState;
-import org.apache.doris.catalog.TableIf.TableType;
 import org.apache.doris.common.ClientPool;
 import org.apache.doris.common.Config;
 import org.apache.doris.common.util.MasterDaemon;
@@ -35,6 +34,7 @@ import org.apache.logging.log4j.Logger;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.TimeUnit;
 
 /*
  * TabletStatMgr is for collecting tablet(replica) statistics from backends.
@@ -54,7 +54,8 @@ public class TabletStatMgr extends MasterDaemon {
         ImmutableMap<Long, Backend> backends = Env.getCurrentSystemInfo().getIdToBackend();
         long start = System.currentTimeMillis();
         taskPool.submit(() -> {
-            backends.values().parallelStream().forEach(backend -> {
+            // no need to get tablet stat if backend is not alive
+            backends.values().stream().filter(Backend::isAlive).parallel().forEach(backend -> {
                 BackendService.Client client = null;
                 TNetworkAddress address = null;
                 boolean ok = false;
@@ -62,23 +63,31 @@ public class TabletStatMgr extends MasterDaemon {
                     address = new TNetworkAddress(backend.getHost(), backend.getBePort());
                     client = ClientPool.backendPool.borrowObject(address);
                     TTabletStatResult result = client.getTabletStat();
-                    LOG.debug("get tablet stat from backend: {}, num: {}", backend.getId(),
-                            result.getTabletsStatsSize());
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("get tablet stat from backend: {}, num: {}", backend.getId(),
+                                result.getTabletsStatsSize());
+                    }
                     updateTabletStat(backend.getId(), result);
                     ok = true;
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     LOG.warn("task exec error. backend[{}]", backend.getId(), e);
-                } finally {
+                }
+
+                try {
                     if (ok) {
                         ClientPool.backendPool.returnObject(address, client);
                     } else {
                         ClientPool.backendPool.invalidateObject(address, client);
                     }
+                } catch (Throwable e) {
+                    LOG.warn("client pool recyle error. backend[{}]", backend.getId(), e);
                 }
             });
         }).join();
-        LOG.debug("finished to get tablet stat of all backends. cost: {} ms",
-                (System.currentTimeMillis() - start));
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("finished to get tablet stat of all backends. cost: {} ms",
+                    (System.currentTimeMillis() - start));
+        }
 
         // after update replica in all backends, update index row num
         start = System.currentTimeMillis();
@@ -90,11 +99,18 @@ public class TabletStatMgr extends MasterDaemon {
             }
             List<Table> tableList = db.getTables();
             for (Table table : tableList) {
-                if (table.getType() != TableType.OLAP) {
+                // Will process OlapTable and MTMV
+                if (!table.isManagedTable()) {
                     continue;
                 }
                 OlapTable olapTable = (OlapTable) table;
-                if (!table.writeLockIfExist()) {
+                // Use try write lock to avoid such cases
+                //    Time1: Thread1 hold read lock for 5min
+                //    Time2: Thread2 want to add write lock, then it will be the first element in lock queue
+                //    Time3: Thread3 want to add read lock, but it will not, because thread 2 want to add write lock
+                // In this case, thread 3 has to wait more than 5min, because it has to wait thread 2 to add
+                // write lock and release write lock and thread 2 has to wait thread 1 to release read lock
+                if (!table.tryWriteLockIfExist(3000, TimeUnit.MILLISECONDS)) {
                     continue;
                 }
                 try {
@@ -115,8 +131,10 @@ public class TabletStatMgr extends MasterDaemon {
                             index.setRowCount(indexRowCount);
                         } // end for indices
                     } // end for partitions
-                    LOG.debug("finished to set row num for table: {} in database: {}",
-                             table.getName(), db.getFullName());
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("finished to set row num for table: {} in database: {}",
+                                 table.getName(), db.getFullName());
+                    }
                 } finally {
                     table.writeUnlock();
                 }

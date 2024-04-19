@@ -17,9 +17,11 @@
 
 package org.apache.doris.analysis;
 
+import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.common.ErrorCode;
 import org.apache.doris.common.ErrorReport;
+import org.apache.doris.common.FeNameFormat;
 import org.apache.doris.common.UserException;
 import org.apache.doris.common.util.Util;
 import org.apache.doris.mysql.privilege.PrivPredicate;
@@ -54,15 +56,19 @@ public class CreateViewStmt extends BaseViewStmt {
 
     @Override
     public void analyze(Analyzer analyzer) throws UserException {
+        super.analyze(analyzer);
         tableName.analyze(analyzer);
+        FeNameFormat.checkTableName(tableName.getTbl());
         viewDefStmt.setNeedToSql(true);
         // disallow external catalog
         Util.prohibitExternalCatalog(tableName.getCtl(), this.getClass().getSimpleName());
 
         // check privilege
-        if (!Env.getCurrentEnv().getAuth().checkTblPriv(ConnectContext.get(), tableName.getDb(),
-                tableName.getTbl(), PrivPredicate.CREATE)) {
-            ErrorReport.reportAnalysisException(ErrorCode.ERR_SPECIFIC_ACCESS_DENIED_ERROR, "CREATE");
+        if (!Env.getCurrentEnv().getAccessManager()
+                .checkTblPriv(ConnectContext.get(), tableName.getCtl(), tableName.getDb(),
+                        tableName.getTbl(), PrivPredicate.CREATE)) {
+            ErrorReport.reportAnalysisException(ErrorCode.ERR_TABLE_ACCESS_DENIED_ERROR,
+                    PrivPredicate.CREATE.getPrivs().toString(), tableName.getTbl());
         }
 
         // Do not rewrite nondeterministic functions to constant in create view's def stmt
@@ -72,13 +78,15 @@ public class CreateViewStmt extends BaseViewStmt {
         try {
             if (cols != null) {
                 cloneStmt = viewDefStmt.clone();
+                cloneStmt.forbiddenMVRewrite();
             }
 
             // Analyze view define statement
             Analyzer viewAnalyzer = new Analyzer(analyzer);
+            viewDefStmt.forbiddenMVRewrite();
             viewDefStmt.analyze(viewAnalyzer);
-
-            createColumnAndViewDefs(analyzer);
+            checkQueryAuth();
+            createColumnAndViewDefs(viewAnalyzer);
         } finally {
             // must reset this flag, otherwise, all following query statement in this connection
             // will not do constant fold for nondeterministic functions.
@@ -86,5 +94,13 @@ public class CreateViewStmt extends BaseViewStmt {
                 ConnectContext.get().setNotEvalNondeterministicFunction(false);
             }
         }
+    }
+
+    public void setInlineViewDef(String querySql) {
+        inlineViewDef = querySql;
+    }
+
+    public void setFinalColumns(List<Column> columns) {
+        finalCols.addAll(columns);
     }
 }

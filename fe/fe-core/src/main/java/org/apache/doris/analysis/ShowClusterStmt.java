@@ -22,18 +22,20 @@ import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.ScalarType;
 import org.apache.doris.common.AnalysisException;
+import org.apache.doris.common.Config;
 import org.apache.doris.common.ErrorCode;
 import org.apache.doris.common.ErrorReport;
-import org.apache.doris.mysql.privilege.PaloPrivilege;
 import org.apache.doris.mysql.privilege.PrivBitSet;
 import org.apache.doris.mysql.privilege.PrivPredicate;
+import org.apache.doris.mysql.privilege.Privilege;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.qe.ShowResultSetMetaData;
 
 import com.google.common.collect.ImmutableList;
 
 public class ShowClusterStmt extends ShowStmt {
-    public static final ImmutableList<String> TITLE_NAMES = new ImmutableList.Builder<String>().add("cluster").build();
+    public static final ImmutableList<String> TITLE_NAMES = new ImmutableList.Builder<String>()
+            .add("cluster").add("is_current").add("users").build();
 
     public ShowClusterStmt() {
     }
@@ -46,7 +48,7 @@ public class ShowClusterStmt extends ShowStmt {
         titleNames = TITLE_NAMES;
 
         for (String title : titleNames) {
-            builder.addColumn(new Column(title, ScalarType.createVarchar(30)));
+            builder.addColumn(new Column(title, ScalarType.createVarchar(128)));
         }
         return builder.build();
     }
@@ -58,15 +60,17 @@ public class ShowClusterStmt extends ShowStmt {
 
     @Override
     public void analyze(Analyzer analyzer) throws AnalysisException {
-        if (!Env.getCurrentEnv().getAuth().checkGlobalPriv(ConnectContext.get(),
-                PrivPredicate.of(PrivBitSet.of(PaloPrivilege.ADMIN_PRIV, PaloPrivilege.NODE_PRIV), Operator.OR))) {
-            ErrorReport.reportAnalysisException(ErrorCode.ERR_SPECIFIC_ACCESS_DENIED_ERROR, "ADMIN");
+        if (Config.isNotCloudMode()) {
+            // just user admin
+            if (!Env.getCurrentEnv().getAuth().checkGlobalPriv(ConnectContext.get().getCurrentUserIdentity(),
+                        PrivPredicate.of(PrivBitSet.of(Privilege.ADMIN_PRIV, Privilege.NODE_PRIV), Operator.OR))) {
+                ErrorReport.reportAnalysisException(ErrorCode.ERR_SPECIFIC_ACCESS_DENIED_ERROR, "ADMIN");
+            }
         }
     }
 
     @Override
     public String toSql() {
-        // TODO Auto-generated method stub
         return super.toSql();
     }
 

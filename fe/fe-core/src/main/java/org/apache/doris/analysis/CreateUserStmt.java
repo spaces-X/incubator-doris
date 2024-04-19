@@ -19,19 +19,23 @@ package org.apache.doris.analysis;
 
 import org.apache.doris.catalog.Env;
 import org.apache.doris.cluster.ClusterNamespace;
+import org.apache.doris.common.AnalysisException;
+import org.apache.doris.common.Config;
 import org.apache.doris.common.ErrorCode;
 import org.apache.doris.common.ErrorReport;
 import org.apache.doris.common.FeNameFormat;
 import org.apache.doris.common.UserException;
-import org.apache.doris.mysql.MysqlPassword;
-import org.apache.doris.mysql.privilege.PaloAuth.PrivLevel;
-import org.apache.doris.mysql.privilege.PaloRole;
+import org.apache.doris.mysql.authenticate.AuthenticateType;
 import org.apache.doris.mysql.privilege.PrivPredicate;
+import org.apache.doris.mysql.privilege.Role;
 import org.apache.doris.qe.ConnectContext;
 
 import com.google.common.base.Strings;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
+import java.util.UUID;
 
 /*
  * We support the following create user stmts:
@@ -52,38 +56,65 @@ public class CreateUserStmt extends DdlStmt {
 
     private boolean ifNotExist;
     private UserIdentity userIdent;
-    private String password;
-    private byte[] scramblePassword;
-    private boolean isPlain;
+    private PassVar passVar;
     private String role;
+    private PasswordOptions passwordOptions;
+    private String comment;
+
+    private String userId;
 
     public CreateUserStmt() {
     }
 
     public CreateUserStmt(UserDesc userDesc) {
         userIdent = userDesc.getUserIdent();
-        password = userDesc.getPassword();
-        isPlain = userDesc.isPlain();
+        String uId = Env.getCurrentEnv().getAuth().getUserId(ClusterNamespace.getNameFromFullName(userIdent.getUser()));
+        LOG.debug("create user stmt userIdent {}, userName {}, userId {}",
+                userIdent, ClusterNamespace.getNameFromFullName(userIdent.getUser()), uId);
+        // avoid this case "jack@'192.1'" and "jack@'192.2'", jack's uid different
+        if (Strings.isNullOrEmpty(uId)) {
+            userId = UUID.randomUUID().toString();
+        } else {
+            userId = uId;
+        }
+        passVar = userDesc.getPassVar();
+        if (this.passwordOptions == null) {
+            this.passwordOptions = PasswordOptions.UNSET_OPTION;
+        }
     }
 
     public CreateUserStmt(boolean ifNotExist, UserDesc userDesc, String role) {
+        this(ifNotExist, userDesc, role, null, null);
+    }
+
+    public CreateUserStmt(boolean ifNotExist, UserDesc userDesc, String role, PasswordOptions passwordOptions,
+            String comment) {
         this.ifNotExist = ifNotExist;
         userIdent = userDesc.getUserIdent();
-        password = userDesc.getPassword();
-        isPlain = userDesc.isPlain();
+        String uId = Env.getCurrentEnv().getAuth().getUserId(ClusterNamespace.getNameFromFullName(userIdent.getUser()));
+        LOG.debug("create user stmt by role userIdent {}, userName {}, userId {}",
+                userIdent, ClusterNamespace.getNameFromFullName(userIdent.getUser()), uId);
+        // avoid this case "jack@'192.1'" and "jack@'192.2'", jack's uid different
+        if (Strings.isNullOrEmpty(uId)) {
+            userId = UUID.randomUUID().toString();
+        } else {
+            userId = uId;
+        }
+        passVar = userDesc.getPassVar();
         this.role = role;
+        this.passwordOptions = passwordOptions;
+        if (this.passwordOptions == null) {
+            this.passwordOptions = PasswordOptions.UNSET_OPTION;
+        }
+        this.comment = Strings.nullToEmpty(comment);
     }
 
     public boolean isIfNotExist() {
         return ifNotExist;
     }
 
-    public boolean isSuperuser() {
-        return role.equalsIgnoreCase(PaloRole.ADMIN_ROLE);
-    }
-
-    public boolean hasRole() {
-        return role != null;
+    public String getUserId() {
+        return userId;
     }
 
     public String getQualifiedRole() {
@@ -91,7 +122,7 @@ public class CreateUserStmt extends DdlStmt {
     }
 
     public byte[] getPassword() {
-        return scramblePassword;
+        return passVar.getScrambled();
     }
 
     public UserIdentity getUserIdent() {
@@ -103,39 +134,43 @@ public class CreateUserStmt extends DdlStmt {
         return true;
     }
 
+    public PasswordOptions getPasswordOptions() {
+        return passwordOptions;
+    }
+
+    public String getComment() {
+        return comment;
+    }
+
     @Override
     public void analyze(Analyzer analyzer) throws UserException {
         super.analyze(analyzer);
-        userIdent.analyze(analyzer.getClusterName());
+
+        if (Config.access_controller_type.equalsIgnoreCase("ranger-doris")
+                && AuthenticateType.getAuthTypeConfig() == AuthenticateType.LDAP) {
+            throw new AnalysisException("Create user is prohibited when Ranger and LDAP are enabled at same time.");
+        }
+
+        userIdent.analyze();
 
         if (userIdent.isRootUser()) {
             ErrorReport.reportAnalysisException(ErrorCode.ERR_COMMON_ERROR, "Can not create root user");
         }
 
         // convert plain password to hashed password
-        if (!Strings.isNullOrEmpty(password)) {
-            if (isPlain) {
-                // convert plain password to scramble
-                scramblePassword = MysqlPassword.makeScrambledPassword(password);
-            } else {
-                scramblePassword = MysqlPassword.checkPassword(password);
-            }
-        } else {
-            scramblePassword = new byte[0];
-        }
+        passVar.analyze();
 
         if (role != null) {
             if (role.equalsIgnoreCase("SUPERUSER")) {
                 // for forward compatibility
-                role = PaloRole.ADMIN_ROLE;
+                role = Role.ADMIN_ROLE;
             }
             FeNameFormat.checkRoleName(role, true /* can be admin */, "Can not granted user to role");
-            role = ClusterNamespace.getFullName(analyzer.getClusterName(), role);
         }
 
-        // check if current user has GRANT priv on GLOBAL or DATABASE level.
-        if (!Env.getCurrentEnv().getAuth().checkHasPriv(ConnectContext.get(),
-                PrivPredicate.GRANT, PrivLevel.GLOBAL, PrivLevel.DATABASE)) {
+        passwordOptions.analyze();
+
+        if (!Env.getCurrentEnv().getAccessManager().checkGlobalPriv(ConnectContext.get(), PrivPredicate.GRANT)) {
             ErrorReport.reportAnalysisException(ErrorCode.ERR_SPECIFIC_ACCESS_DENIED_ERROR, "GRANT");
         }
     }
@@ -144,19 +179,23 @@ public class CreateUserStmt extends DdlStmt {
     public String toSql() {
         StringBuilder sb = new StringBuilder();
         sb.append("CREATE USER ").append(userIdent);
-        if (!Strings.isNullOrEmpty(password)) {
-            if (isPlain) {
+        if (!Strings.isNullOrEmpty(passVar.getText())) {
+            if (passVar.isPlain()) {
                 sb.append(" IDENTIFIED BY '").append("*XXX").append("'");
             } else {
-                sb.append(" IDENTIFIED BY PASSWORD '").append(password).append("'");
+                sb.append(" IDENTIFIED BY PASSWORD '").append(passVar.getText()).append("'");
             }
         }
 
         if (!Strings.isNullOrEmpty(role)) {
             sb.append(" DEFAULT ROLE '").append(role).append("'");
-
         }
-
+        if (passwordOptions != null) {
+            sb.append(passwordOptions.toSql());
+        }
+        if (!StringUtils.isEmpty(comment)) {
+            sb.append(" COMMENT \"").append(comment).append("\"");
+        }
         return sb.toString();
     }
 

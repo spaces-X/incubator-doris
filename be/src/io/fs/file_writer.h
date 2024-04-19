@@ -21,44 +21,47 @@
 
 #include "common/status.h"
 #include "gutil/macros.h"
+#include "io/fs/file_reader.h"
+#include "io/fs/file_reader_writer_fwd.h"
 #include "io/fs/path.h"
 #include "util/slice.h"
 
-namespace doris {
-namespace io {
+namespace doris::io {
+class FileSystem;
+
+// Only affects remote file writers
+struct FileWriterOptions {
+    bool write_file_cache = false;
+    bool is_cold_data = false;
+    bool sync_file_data = true;         // Whether flush data into storage system
+    uint64_t file_cache_expiration = 0; // Absolute time
+};
 
 class FileWriter {
 public:
-    FileWriter(Path&& path) : _path(std::move(path)) {}
+    FileWriter() = default;
     virtual ~FileWriter() = default;
 
-    DISALLOW_COPY_AND_ASSIGN(FileWriter);
+    FileWriter(const FileWriter&) = delete;
+    const FileWriter& operator=(const FileWriter&) = delete;
 
     // Normal close. Wait for all data to persist before returning.
+    // If there is no data appended, an empty file will be persisted.
     virtual Status close() = 0;
 
-    // Abnormal close and remove this file.
-    virtual Status abort() = 0;
-
-    virtual Status append(const Slice& data) = 0;
+    Status append(const Slice& data) { return appendv(&data, 1); }
 
     virtual Status appendv(const Slice* data, size_t data_cnt) = 0;
-
-    virtual Status write_at(size_t offset, const Slice& data) = 0;
 
     // Call this method when there is no more data to write.
     // FIXME(cyx): Does not seem to be an appropriate interface for file system?
     virtual Status finalize() = 0;
 
+    virtual const Path& path() const = 0;
+
     virtual size_t bytes_appended() const = 0;
 
-    const Path& path() const { return _path; }
-
-protected:
-    Path _path;
+    virtual bool closed() const = 0;
 };
 
-using FileWriterPtr = std::unique_ptr<FileWriter>;
-
-} // namespace io
-} // namespace doris
+} // namespace doris::io

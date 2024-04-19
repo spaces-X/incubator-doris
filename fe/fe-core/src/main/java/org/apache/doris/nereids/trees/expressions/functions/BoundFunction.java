@@ -17,20 +17,38 @@
 
 package org.apache.doris.nereids.trees.expressions.functions;
 
+import org.apache.doris.catalog.FunctionSignature;
 import org.apache.doris.nereids.exceptions.UnboundException;
 import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.visitor.ExpressionVisitor;
+import org.apache.doris.nereids.util.Utils;
+
+import com.google.common.base.Suppliers;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /** BoundFunction. */
-public abstract class BoundFunction extends Expression {
+public abstract class BoundFunction extends Function implements ComputeSignature {
     private final String name;
+
+    private final Supplier<FunctionSignature> signatureCache = Suppliers.memoize(() -> {
+        // first step: find the candidate signature in the signature list
+        FunctionSignature matchedSignature = searchSignature(getSignatures());
+        // second step: change the signature, e.g. fill precision for decimal v2
+        return computeSignature(matchedSignature);
+    });
 
     public BoundFunction(String name, Expression... arguments) {
         super(arguments);
+        this.name = Objects.requireNonNull(name, "name can not be null");
+    }
+
+    public BoundFunction(String name, List<Expression> children) {
+        super(children);
         this.name = Objects.requireNonNull(name, "name can not be null");
     }
 
@@ -38,8 +56,16 @@ public abstract class BoundFunction extends Expression {
         return name;
     }
 
-    public List<Expression> getArguments() {
-        return children;
+    @Override
+    public String getExpressionName() {
+        if (!this.exprName.isPresent()) {
+            this.exprName = Optional.of(Utils.normalizeName(getName(), DEFAULT_EXPRESSION_NAME));
+        }
+        return this.exprName.get();
+    }
+
+    public FunctionSignature getSignature() {
+        return signatureCache.get();
     }
 
     @Override
@@ -48,15 +74,8 @@ public abstract class BoundFunction extends Expression {
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
-        }
-        BoundFunction that = (BoundFunction) o;
-        return Objects.equals(name, that.name) && Objects.equals(children, that.children);
+    protected boolean extraEquals(Expression that) {
+        return Objects.equals(name, ((BoundFunction) that).name);
     }
 
     @Override
@@ -66,11 +85,16 @@ public abstract class BoundFunction extends Expression {
 
     @Override
     public String toSql() throws UnboundException {
-        String args = children()
-                .stream()
-                .map(Expression::toSql)
-                .collect(Collectors.joining(", "));
-        return name + "(" + args + ")";
+        StringBuilder sql = new StringBuilder(name).append("(");
+        int arity = arity();
+        for (int i = 0; i < arity; i++) {
+            Expression arg = child(i);
+            sql.append(arg.toSql());
+            if (i + 1 < arity) {
+                sql.append(", ");
+            }
+        }
+        return sql.append(")").toString();
     }
 
     @Override

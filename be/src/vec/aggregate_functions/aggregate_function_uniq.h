@@ -20,24 +20,42 @@
 
 #pragma once
 
-#include <parallel_hashmap/phmap.h>
+#include <stddef.h>
 
+#include <algorithm>
+#include <boost/iterator/iterator_facade.hpp>
+#include <memory>
 #include <type_traits>
+#include <vector>
 
-#include "gutil/hash/city.h"
+#include "common/compiler_util.h" // IWYU pragma: keep
 #include "vec/aggregate_functions/aggregate_function.h"
-#include "vec/columns/column_decimal.h"
-#include "vec/common/aggregation_common.h"
+#include "vec/columns/column.h"
+#include "vec/columns/column_vector.h"
+#include "vec/columns/columns_number.h"
 #include "vec/common/assert_cast.h"
-#include "vec/common/bit_cast.h"
-#include "vec/common/hash_table/hash_set.h"
-#include "vec/common/typeid_cast.h"
+#include "vec/common/hash_table/hash.h"
+#include "vec/common/hash_table/phmap_fwd_decl.h"
+#include "vec/common/string_ref.h"
+#include "vec/common/uint128.h"
+#include "vec/core/types.h"
 #include "vec/data_types/data_type_number.h"
+#include "vec/io/io_helper.h"
+#include "vec/io/var_int.h"
+
+namespace doris {
+namespace vectorized {
+class Arena;
+class BufferReadable;
+class BufferWritable;
+template <typename T>
+class ColumnDecimal;
+} // namespace vectorized
+} // namespace doris
+template <typename T>
+struct HashCRC32;
 
 namespace doris::vectorized {
-
-// Here is an empirical value.
-static constexpr size_t HASH_MAP_PREFETCH_DIST = 16;
 
 /// uniqExact
 
@@ -45,16 +63,14 @@ template <typename T>
 struct AggregateFunctionUniqExactData {
     static constexpr bool is_string_key = std::is_same_v<T, String>;
     using Key = std::conditional_t<is_string_key, UInt128, T>;
-    using Hash = std::conditional_t<is_string_key, UInt128TrivialHash, HashCRC32<Key>>;
+    using Hash = HashCRC32<Key>;
 
-    using Set = phmap::flat_hash_set<Key, Hash>;
+    using Set = flat_hash_set<Key, Hash>;
 
+    // TODO: replace SipHash with xxhash to speed up
     static UInt128 ALWAYS_INLINE get_key(const StringRef& value) {
-        UInt128 key;
-        SipHash hash;
-        hash.update(value.data, value.size);
-        hash.get128(key.low, key.high);
-        return key;
+        auto hash_value = XXH_INLINE_XXH128(value.data, value.size, 0);
+        return UInt128 {hash_value.high64, hash_value.low64};
     }
 
     Set set;
@@ -90,14 +106,13 @@ class AggregateFunctionUniq final
 public:
     using KeyType = std::conditional_t<std::is_same_v<T, String>, UInt128, T>;
     AggregateFunctionUniq(const DataTypes& argument_types_)
-            : IAggregateFunctionDataHelper<Data, AggregateFunctionUniq<T, Data>>(argument_types_,
-                                                                                 {}) {}
+            : IAggregateFunctionDataHelper<Data, AggregateFunctionUniq<T, Data>>(argument_types_) {}
 
     String get_name() const override { return Data::get_name(); }
 
     DataTypePtr get_return_type() const override { return std::make_shared<DataTypeInt64>(); }
 
-    void add(AggregateDataPtr __restrict place, const IColumn** columns, size_t row_num,
+    void add(AggregateDataPtr __restrict place, const IColumn** columns, ssize_t row_num,
              Arena*) const override {
         detail::OneAdder<T, Data>::add(this->data(place), *columns[0], row_num);
     }
@@ -174,10 +189,10 @@ public:
         }
     }
 
-    void deserialize_and_merge(AggregateDataPtr __restrict place, BufferReadable& buf,
-                               Arena* arena) const override {
+    void deserialize_and_merge(AggregateDataPtr __restrict place, AggregateDataPtr __restrict rhs,
+                               BufferReadable& buf, Arena* arena) const override {
         auto& set = this->data(place).set;
-        size_t size;
+        UInt64 size;
         read_var_uint(size, buf);
 
         set.rehash(size + set.size());
@@ -191,7 +206,17 @@ public:
 
     void deserialize(AggregateDataPtr __restrict place, BufferReadable& buf,
                      Arena* arena) const override {
-        deserialize_and_merge(place, buf, arena);
+        auto& set = this->data(place).set;
+        UInt64 size;
+        read_var_uint(size, buf);
+
+        set.rehash(size + set.size());
+
+        for (size_t i = 0; i < size; ++i) {
+            KeyType ref;
+            read_pod_binary(ref, buf);
+            set.insert(ref);
+        }
     }
 
     void insert_result_into(ConstAggregateDataPtr __restrict place, IColumn& to) const override {
